@@ -1,6 +1,6 @@
 """API server configuration loaded from environment variables."""
 
-from chatops_shared.config import SharedSettings
+from chatops_shared.config import CommaSeparatedInts, SharedSettings
 
 
 class ApiServerSettings(SharedSettings):
@@ -16,7 +16,7 @@ class ApiServerSettings(SharedSettings):
     container_manager_url: str = "http://container-manager:8001"
 
     # Comma-separated Telegram IDs that are automatically bootstrapped as admins.
-    admin_telegram_ids: list[int] = []
+    admin_telegram_ids: CommaSeparatedInts = []
 
     @property
     def encryption_key(self) -> bytes:

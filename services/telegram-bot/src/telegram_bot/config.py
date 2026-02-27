@@ -1,6 +1,6 @@
 """Telegram bot configuration loaded from environment variables."""
 
-from chatops_shared.config import SharedSettings
+from chatops_shared.config import CommaSeparatedInts, SharedSettings
 
 
 class BotSettings(SharedSettings):
@@ -16,7 +16,7 @@ class BotSettings(SharedSettings):
     webhook_domain: str = ""  # e.g. "chatops.example.com"
 
     api_server_url: str = "http://api-server:8000"
-    admin_telegram_ids: list[int] = []
+    admin_telegram_ids: CommaSeparatedInts = []
     redis_url: str = "redis://redis:6379"
 
 
