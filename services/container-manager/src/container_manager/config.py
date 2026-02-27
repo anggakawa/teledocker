@@ -18,5 +18,9 @@ class ContainerManagerSettings(SharedSettings):
     # URL of the API server (used by health monitor to update session status).
     api_server_url: str = "http://api-server:8000"
 
+    # Docker network that user containers join so container-manager can
+    # reach the agent-bridge WebSocket on port 9100.
+    agent_network: str = "agent-net"
+
 
 settings = ContainerManagerSettings()

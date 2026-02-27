@@ -2,14 +2,17 @@
 
 import json
 import logging
+import shlex
+from pathlib import PurePosixPath
 
-import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from container_manager.config import settings
 from container_manager.docker_client import DockerClient
+
+_WORKSPACE_ROOT = PurePosixPath("/workspace")
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,23 @@ def verify_token(x_service_token: str = Header(..., alias="X-Service-Token")) ->
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Invalid service token"
         )
+
+
+def _validate_workspace_path(user_path: str) -> str:
+    """Resolve a user-supplied path and ensure it stays within /workspace.
+
+    Returns the safe absolute path string. Raises HTTPException on traversal.
+    """
+    # Resolve against /workspace to canonicalize any '..' sequences.
+    resolved = PurePosixPath("/workspace") / user_path
+    # Normalize the path (collapse .., ., etc.).
+    normalized = PurePosixPath(*resolved.parts)
+    if not str(normalized).startswith("/workspace"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Path traversal detected — path must stay within /workspace",
+        )
+    return str(normalized)
 
 
 class CreateContainerRequest(BaseModel):
@@ -59,6 +79,7 @@ async def create_container(
         env_vars=payload.env_vars,
         agent_image=settings.agent_image,
         workspace_base_path=settings.workspace_base_path,
+        agent_network=settings.agent_network,
     )
     return {"container_id": container_id, "container_name": payload.container_name}
 
@@ -121,24 +142,31 @@ async def send_message_to_agent(
     """Forward a message to the agent bridge via WebSocket and stream the response."""
     import websockets
 
+    # Resolve the container name which acts as DNS hostname on agent-net.
+    container_name = await docker.get_container_name(container_id)
+
     async def generate():
         try:
-            # The container name is used as hostname inside the Docker network.
-            # We need to look up the container name from the container ID.
-            # For simplicity, we use the container_id directly — in practice
-            # the container is in NetworkMode=none so we'd use docker exec instead.
-            # For the agent bridge communication, we use docker exec to relay.
-            message_payload = json.dumps(
-                {"method": "execute_prompt", "params": {"prompt": payload.text}, "id": "1"}
-            )
-            async for line in docker.exec_command(
-                container_id,
-                f"echo '{message_payload}' | uv run --directory /opt/agent-bridge python -c "
-                "\"import sys,asyncio,json; from agent_bridge.claude import ClaudeCodeRunner; "
-                "runner = ClaudeCodeRunner(); "
-                "asyncio.run(runner.send_message(json.loads(sys.stdin.read())['params']['prompt'], {}))\"",
-            ):
-                yield f"data: {json.dumps({'chunk': line})}\n\n"
+            uri = f"ws://{container_name}:9100"
+            async with websockets.connect(uri, open_timeout=10) as ws:
+                request_payload = json.dumps({
+                    "method": "execute_prompt",
+                    "params": {"prompt": payload.text},
+                    "id": "1",
+                })
+                await ws.send(request_payload)
+
+                # Read streaming JSON-RPC frames until we get done=true.
+                async for raw_frame in ws:
+                    frame = json.loads(raw_frame)
+                    if frame.get("error"):
+                        yield f"data: {json.dumps({'error': frame['error']})}\n\n"
+                        break
+                    chunk = frame.get("chunk", "")
+                    if chunk:
+                        yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+                    if frame.get("done", False):
+                        break
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"
         finally:
@@ -156,12 +184,14 @@ async def upload_file(
     _: None = Depends(verify_token),
 ) -> dict:
     """Write an uploaded file into the container's /workspace directory."""
+    safe_path = _validate_workspace_path(x_filename)
     file_content = await request.body()
 
     # Use docker exec to write the file using base64 to handle binary content.
     import base64
     encoded = base64.b64encode(file_content).decode("ascii")
-    command = f"echo '{encoded}' | base64 -d > /workspace/{x_filename}"
+    quoted_path = shlex.quote(safe_path)
+    command = f"echo '{encoded}' | base64 -d > {quoted_path}"
 
     output_lines = []
     async for line in docker.exec_command(container_id, command):
@@ -178,13 +208,15 @@ async def download_file(
     _: None = Depends(verify_token),
 ) -> StreamingResponse:
     """Stream a file from the container's /workspace directory."""
+    safe_path = _validate_workspace_path(file_path)
 
     async def stream():
         # Read file as base64 chunks via exec, then decode on the fly.
         import base64
+        quoted_path = shlex.quote(safe_path)
         chunks = []
         async for line in docker.exec_command(
-            container_id, f"base64 /workspace/{file_path}"
+            container_id, f"base64 {quoted_path}"
         ):
             chunks.append(line)
         raw = base64.b64decode("".join(chunks))

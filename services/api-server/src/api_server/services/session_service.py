@@ -6,10 +6,11 @@ import uuid
 import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import func
 
-from chatops_shared.schemas.session import SessionDTO, SessionStatus
+from chatops_shared.schemas.session import SessionDTO
 
-from api_server.db.models import Session
+from api_server.db.models import Session, User
 
 logger = logging.getLogger(__name__)
 
@@ -174,3 +175,65 @@ async def destroy_session(
     await db.delete(session)
     await db.commit()
     logger.info("Destroyed session %s", session_id)
+
+
+async def list_sessions(
+    status_filter: str | None, db: AsyncSession
+) -> list[SessionDTO]:
+    """List sessions, optionally filtered by status (e.g. 'running')."""
+    query = select(Session)
+    if status_filter:
+        query = query.where(Session.status == status_filter)
+
+    result = await db.execute(query)
+    sessions = result.scalars().all()
+    return [SessionDTO.model_validate(s) for s in sessions]
+
+
+async def get_active_session_by_telegram_id(
+    telegram_id: int, db: AsyncSession
+) -> SessionDTO | None:
+    """Find the first running/paused/creating session for a Telegram user.
+
+    Joins sessions to users via user_id to look up by telegram_id.
+    """
+    result = await db.execute(
+        select(Session)
+        .join(User, Session.user_id == User.id)
+        .where(
+            User.telegram_id == telegram_id,
+            Session.status.in_(["running", "paused", "creating"]),
+        )
+    )
+    session = result.scalar_one_or_none()
+    if session is None:
+        return None
+    return SessionDTO.model_validate(session)
+
+
+async def update_session_status(
+    session_id: uuid.UUID, new_status: str, db: AsyncSession
+) -> SessionDTO:
+    """Update only the status field of a session."""
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if session is None:
+        raise ValueError(f"Session {session_id} not found")
+
+    session.status = new_status
+    await db.commit()
+    await db.refresh(session)
+    return SessionDTO.model_validate(session)
+
+
+async def touch_session_activity(
+    session_id: uuid.UUID, db: AsyncSession
+) -> None:
+    """Bump last_activity_at to now. Called when user sends a message."""
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if session is None:
+        return
+
+    session.last_activity_at = func.now()
+    await db.commit()

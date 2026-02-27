@@ -10,7 +10,6 @@ Each handler corresponds to one JSON-RPC method name:
 
 import base64
 import logging
-import os
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -21,6 +20,17 @@ from agent_bridge.claude import ClaudeCodeRunner
 logger = logging.getLogger(__name__)
 
 _WORKSPACE = Path("/workspace")
+
+
+def _validate_path(user_path: str) -> Path:
+    """Resolve a user-supplied path and ensure it stays within /workspace.
+
+    Returns the safe resolved Path. Raises ValueError on traversal attempts.
+    """
+    target = (_WORKSPACE / user_path).resolve()
+    if not str(target).startswith(str(_WORKSPACE.resolve())):
+        raise ValueError(f"Path traversal detected: {user_path}")
+    return target
 
 
 async def execute_prompt(
@@ -55,7 +65,7 @@ async def upload_file(params: dict) -> dict:
     content_base64 = params.get("content_base64", "")
 
     file_bytes = base64.b64decode(content_base64)
-    destination = _WORKSPACE / filename
+    destination = _validate_path(filename)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(file_bytes)
 
@@ -75,7 +85,7 @@ async def download_file(params: dict) -> dict:
         FileNotFoundError: If the path doesn't exist under /workspace.
     """
     relative_path = params.get("path", "")
-    file_path = _WORKSPACE / relative_path
+    file_path = _validate_path(relative_path)
 
     if not file_path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")

@@ -12,7 +12,7 @@ from uuid import UUID
 import httpx
 
 from chatops_shared.schemas.session import SessionDTO
-from chatops_shared.schemas.user import SetApiKeyRequest, UserDTO
+from chatops_shared.schemas.user import UserDTO
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +94,17 @@ class ApiClient:
             )
             response.raise_for_status()
 
+    async def update_provider(
+        self, telegram_id: int, provider: str, base_url: str | None
+    ) -> None:
+        """Update provider config without touching the encrypted API key."""
+        async with self._client() as client:
+            response = await client.put(
+                f"/api/v1/users/{telegram_id}/provider",
+                json={"provider": provider, "base_url": base_url},
+            )
+            response.raise_for_status()
+
     async def remove_api_key(self, telegram_id: int) -> None:
         async with self._client() as client:
             response = await client.delete(f"/api/v1/users/{telegram_id}/apikey")
@@ -120,6 +131,20 @@ class ApiClient:
                     "system_prompt": system_prompt,
                 },
             )
+            response.raise_for_status()
+            return SessionDTO.model_validate(response.json())
+
+    async def get_active_session_by_telegram_id(
+        self, telegram_id: int
+    ) -> SessionDTO | None:
+        """Find active session for a Telegram user (survives bot restarts)."""
+        async with self._client() as client:
+            response = await client.get(
+                "/api/v1/sessions/active",
+                params={"telegram_id": telegram_id},
+            )
+            if response.status_code == 404:
+                return None
             response.raise_for_status()
             return SessionDTO.model_validate(response.json())
 

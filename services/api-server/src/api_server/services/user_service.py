@@ -1,6 +1,5 @@
 """Business logic for user registration, approval, and API key management."""
 
-import json
 import logging
 
 from sqlalchemy import select
@@ -154,6 +153,22 @@ async def remove_api_key(telegram_id: int, db: AsyncSession) -> None:
     user.provider_config = None
     await db.commit()
     logger.info("Removed API key for telegram_id=%s", telegram_id)
+
+
+async def update_provider_config(
+    telegram_id: int,
+    provider: str,
+    base_url: str | None,
+    db: AsyncSession,
+) -> None:
+    """Update only the provider_config JSONB. Never touches the encrypted API key."""
+    user = await get_user_model(telegram_id, db)
+    if user is None:
+        raise ValueError(f"User {telegram_id} not found")
+
+    user.provider_config = {"provider": provider, "base_url": base_url}
+    await db.commit()
+    logger.info("Updated provider config for telegram_id=%s provider=%s", telegram_id, provider)
 
 
 def get_decrypted_api_key(user: User, settings: ApiServerSettings) -> str | None:

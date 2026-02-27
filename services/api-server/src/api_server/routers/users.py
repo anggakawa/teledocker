@@ -12,7 +12,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chatops_shared.schemas.user import RegisterRequest, SetApiKeyRequest, UserDTO
+from chatops_shared.schemas.user import (
+    RegisterRequest,
+    SetApiKeyRequest,
+    UpdateProviderRequest,
+    UserDTO,
+)
 
 from api_server.config import settings
 from api_server.db.engine import get_db
@@ -119,6 +124,24 @@ async def list_users(
     db: AsyncSession = Depends(get_db),
 ) -> list[UserDTO]:
     return await user_service.list_users(status_filter, db)
+
+
+@router.put("/{telegram_id}/provider", status_code=status.HTTP_204_NO_CONTENT)
+async def update_provider(
+    telegram_id: int,
+    payload: UpdateProviderRequest,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Update only the provider config without touching the encrypted API key."""
+    try:
+        await user_service.update_provider_config(
+            telegram_id=telegram_id,
+            provider=payload.provider,
+            base_url=payload.base_url,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
 @router.put("/{telegram_id}/apikey", status_code=status.HTTP_204_NO_CONTENT)

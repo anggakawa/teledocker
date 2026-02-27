@@ -48,6 +48,7 @@ class DockerClient:
         env_vars: dict[str, str],
         agent_image: str,
         workspace_base_path: str,
+        agent_network: str | None = None,
     ) -> str:
         """Create and start a user container. Returns the container ID.
 
@@ -56,7 +57,8 @@ class DockerClient:
         - No new privileges flag set.
         - PID limit enforced.
         - CPU and memory limits enforced.
-        - No shared Docker network (each container is isolated).
+        - Containers only join the agent-net bridge network (no access to
+          internal services like postgres, redis, or api-server).
         """
         docker = self._docker_or_raise()
 
@@ -68,7 +70,7 @@ class DockerClient:
             "Hostname": container_name,
             "Env": env_list,
             "User": "1000:1000",
-            # Expose the agent bridge port only to the internal Docker network.
+            # Expose the agent bridge port only to the agent-net Docker network.
             "ExposedPorts": {"9100/tcp": {}},
             "HostConfig": {
                 "CpuQuota": _CPU_QUOTA,
@@ -76,11 +78,9 @@ class DockerClient:
                 "Memory": _MEMORY_BYTES,
                 "PidsLimit": _PIDS_LIMIT,
                 "SecurityOpt": ["no-new-privileges:true"],
-                # Writable workspace volume; /tmp as tmpfs; rest is read-only.
+                # Writable workspace volume; /tmp as tmpfs.
                 "Binds": [f"{workspace_volume_name}:/workspace"],
                 "Tmpfs": {"/tmp": "size=256m"},
-                # Isolated network — no communication with other containers.
-                "NetworkMode": "none",
                 "RestartPolicy": {"Name": "no"},
             },
             "Labels": {
@@ -94,9 +94,24 @@ class DockerClient:
             name=container_name,
         )
         await container.start()
+
+        # Connect the container to the agent network so container-manager
+        # can reach the agent-bridge WebSocket on port 9100.
+        if agent_network:
+            network = await docker.networks.get(agent_network)
+            await network.connect({"Container": container_name})
+
         container_info = await container.show()
         logger.info("Created container %s for user %s", container_name, user_id)
         return container_info["Id"]
+
+    async def get_container_name(self, container_id: str) -> str:
+        """Resolve a container ID to its name (used as DNS hostname)."""
+        docker = self._docker_or_raise()
+        container = docker.containers.container(container_id)
+        info = await container.show()
+        # Docker returns /container_name, strip the leading slash.
+        return info["Name"].lstrip("/")
 
     async def stop_container(self, container_id: str) -> None:
         """Gracefully stop a container (SIGTERM, then SIGKILL after 10s)."""

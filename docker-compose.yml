@@ -27,9 +27,11 @@ services:
       - API_SERVER_URL=http://api-server:8000
       - SERVICE_TOKEN=${SERVICE_TOKEN}
       - ADMIN_TELEGRAM_IDS=${ADMIN_TELEGRAM_IDS}
+      - REDIS_URL=redis://redis:6379
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
       - api-server
+      - redis
     networks:
       - internal
     healthcheck:
@@ -76,6 +78,7 @@ services:
       - IDLE_TIMEOUT_MINUTES=${IDLE_TIMEOUT_MINUTES:-30}
       - API_SERVER_URL=http://api-server:8000
       - SERVICE_TOKEN=${SERVICE_TOKEN}
+      - AGENT_NETWORK=agent-net
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       # Docker socket: allows container-manager to manage user containers.
@@ -85,6 +88,7 @@ services:
       - api-server
     networks:
       - internal
+      - agent-net
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8001/health')"]
       interval: 15s
@@ -131,4 +135,6 @@ volumes:
 
 networks:
   internal:
+    driver: bridge
+  agent-net:
     driver: bridge

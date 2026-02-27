@@ -17,6 +17,7 @@ class BotSettings(SharedSettings):
 
     api_server_url: str = "http://api-server:8000"
     admin_telegram_ids: list[int] = []
+    redis_url: str = "redis://redis:6379"
 
 
 settings = BotSettings()

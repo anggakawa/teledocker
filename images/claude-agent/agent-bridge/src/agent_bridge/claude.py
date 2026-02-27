@@ -21,6 +21,9 @@ _CLAUDE_BINARY = "claude"
 # Flag that allows Claude Code to execute tools without prompting.
 _SKIP_PERMISSIONS_FLAG = "--dangerously-skip-permissions"
 
+# Hard timeout for very long responses (5 minutes).
+_PROCESS_TIMEOUT_SECONDS = 300
+
 
 class ClaudeCodeRunner:
     """Manages Claude Code subprocess invocation and output streaming."""
@@ -33,6 +36,9 @@ class ClaudeCodeRunner:
         self, prompt: str, env_vars: dict[str, str]
     ) -> AsyncGenerator[str, None]:
         """Send a prompt to Claude Code and stream its output line by line.
+
+        Yields lines of output as the subprocess produces them (true streaming),
+        rather than buffering the entire response before yielding.
 
         Args:
             prompt: The user's message to send to Claude Code.
@@ -63,24 +69,34 @@ class ClaudeCodeRunner:
             env=env,
         )
 
-        # Send the prompt via stdin.
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(input=prompt.encode("utf-8")),
-            timeout=300,  # 5-minute hard timeout for very long responses.
-        )
+        # Send the prompt via stdin and close to signal EOF.
+        process.stdin.write(prompt.encode("utf-8"))
+        await process.stdin.drain()
+        process.stdin.close()
+        await process.stdin.wait_closed()
 
         self._has_session = True
 
-        if process.returncode != 0:
-            error_text = stderr.decode("utf-8", errors="replace")
-            logger.error("Claude Code exited with code %s: %s", process.returncode, error_text)
-            yield f"Error: {error_text}"
+        # Stream stdout line-by-line as the subprocess produces output.
+        try:
+            async with asyncio.timeout(_PROCESS_TIMEOUT_SECONDS):
+                async for raw_line in process.stdout:
+                    line = raw_line.decode("utf-8", errors="replace").rstrip("\n")
+                    if line.strip():
+                        yield line
+        except TimeoutError:
+            process.kill()
+            yield "Error: Claude Code process timed out after 5 minutes"
             return
 
-        # Stream each line of stdout back to the caller.
-        for line in stdout.decode("utf-8", errors="replace").splitlines():
-            if line.strip():
-                yield line
+        await process.wait()
+
+        # Report stderr only if the process failed.
+        if process.returncode != 0:
+            stderr_bytes = await process.stderr.read()
+            error_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+            logger.error("Claude Code exited with code %s: %s", process.returncode, error_text)
+            yield f"Error: {error_text}"
 
     async def run_shell(self, command: str) -> AsyncGenerator[str, None]:
         """Run an arbitrary shell command and stream stdout/stderr.

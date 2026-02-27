@@ -53,3 +53,13 @@ class SetApiKeyRequest(BaseModel):
     api_key: str = Field(..., min_length=10)
     provider: str = Field(default="anthropic")
     base_url: str | None = None
+
+
+class UpdateProviderRequest(BaseModel):
+    """Payload for PUT /api/v1/users/:id/provider.
+
+    Updates only the provider_config JSONB — never touches the encrypted API key.
+    """
+
+    provider: str
+    base_url: str | None = None

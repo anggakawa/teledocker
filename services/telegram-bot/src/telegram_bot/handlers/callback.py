@@ -2,18 +2,21 @@
 
 Callback data format: "<action>:<payload>"
 Examples:
-  "approve:123456789"    — admin approves user
-  "reject:123456789"     — admin rejects user
-  "confirm_stop:<uuid>"  — user confirms stop
-  "confirm_destroy:<uuid>" — user confirms destroy
-  "restart:<uuid>"       — restart container
-  "action:cancel"        — cancel dialog
+  "approve:123456789"    -- admin approves user
+  "reject:123456789"     -- admin rejects user
+  "confirm_stop:<uuid>"  -- user confirms stop
+  "confirm_destroy:<uuid>" -- user confirms destroy
+  "restart:<uuid>"       -- restart container
+  "action:cancel"        -- cancel dialog
 """
 
 import logging
+from uuid import UUID
 
 from telegram import Update
 from telegram.ext import ContextTypes
+
+from telegram_bot.commands.session import _get_session_id
 
 logger = logging.getLogger(__name__)
 
@@ -89,16 +92,18 @@ async def _handle_reject(query, context, target_telegram_id: int) -> None:
         await query.edit_message_text(f"Rejection failed: {exc}")
 
 
-async def _handle_confirm_stop(query, context, session_id_or_user_id: str) -> None:
+async def _handle_confirm_stop(query, context, session_id_hint: str) -> None:
     """User confirms container stop."""
     api_client = context.bot_data["api_client"]
     telegram_id = query.from_user.id
 
-    actual_session_id = context.bot_data.get(f"session:{telegram_id}", session_id_or_user_id)
+    # Use the helper to resolve session ID (cache + API fallback).
+    session_id = await _get_session_id(telegram_id, context)
+    if session_id is None:
+        session_id = session_id_hint
 
     try:
-        from uuid import UUID
-        await api_client.stop_session(UUID(actual_session_id))
+        await api_client.stop_session(UUID(session_id))
         await query.edit_message_text(
             "Container stopped. Your workspace is preserved.\n"
             "Use /restart to resume or /new to create a fresh session."
@@ -108,16 +113,17 @@ async def _handle_confirm_stop(query, context, session_id_or_user_id: str) -> No
         await query.edit_message_text(f"Stop failed: {exc}")
 
 
-async def _handle_confirm_destroy(query, context, session_id: str) -> None:
+async def _handle_confirm_destroy(query, context, session_id_hint: str) -> None:
     """User confirms permanent container destruction."""
     api_client = context.bot_data["api_client"]
     telegram_id = query.from_user.id
 
-    actual_session_id = context.bot_data.get(f"session:{telegram_id}", session_id)
+    session_id = await _get_session_id(telegram_id, context)
+    if session_id is None:
+        session_id = session_id_hint
 
     try:
-        from uuid import UUID
-        await api_client.destroy_session(UUID(actual_session_id))
+        await api_client.destroy_session(UUID(session_id))
         # Remove the cached session ID.
         context.bot_data.pop(f"session:{telegram_id}", None)
         await query.edit_message_text(
@@ -132,19 +138,20 @@ async def _handle_confirm_destroy(query, context, session_id: str) -> None:
 async def _handle_destroy_recreate(query, context, session_id: str) -> None:
     """Destroy the current container then immediately create a new one."""
     await _handle_confirm_destroy(query, context, session_id)
-    # After destroying, the user can send /new — don't auto-create to keep UX clear.
+    # After destroying, the user can send /new -- don't auto-create to keep UX clear.
 
 
-async def _handle_restart(query, context, session_id: str) -> None:
+async def _handle_restart(query, context, session_id_hint: str) -> None:
     """Restart a stopped or errored container."""
     api_client = context.bot_data["api_client"]
     telegram_id = query.from_user.id
 
-    actual_session_id = context.bot_data.get(f"session:{telegram_id}", session_id)
+    session_id = await _get_session_id(telegram_id, context)
+    if session_id is None:
+        session_id = session_id_hint
 
     try:
-        from uuid import UUID
-        await api_client.restart_session(UUID(actual_session_id))
+        await api_client.restart_session(UUID(session_id))
         await query.edit_message_text("Container restarted. Send a message to continue.")
     except Exception as exc:
         logger.exception("Failed to restart session: %s", exc)

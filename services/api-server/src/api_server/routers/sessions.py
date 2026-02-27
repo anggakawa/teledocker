@@ -11,8 +11,9 @@ import time
 import uuid
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chatops_shared.schemas.message import ExecRequest, SendMessageRequest
@@ -20,7 +21,7 @@ from chatops_shared.schemas.session import SessionDTO
 
 from api_server.config import settings
 from api_server.db.engine import get_db
-from api_server.dependencies import get_redis, verify_service_token
+from api_server.dependencies import verify_service_token
 from api_server.services import message_service, session_service
 
 logger = logging.getLogger(__name__)
@@ -36,14 +37,39 @@ class CreateSessionRequest(ExecRequest):
     pass
 
 
-from pydantic import BaseModel
-
-
 class NewSessionRequest(BaseModel):
     user_id: uuid.UUID
     telegram_id: int
     agent_type: str = "claude-code"
     system_prompt: str | None = None
+
+
+class UpdateStatusRequest(BaseModel):
+    status: str
+
+
+@router.get("", response_model=list[SessionDTO])
+async def list_sessions(
+    status_filter: str | None = Query(default=None, alias="status"),
+    db: AsyncSession = Depends(get_db),
+) -> list[SessionDTO]:
+    """List sessions, optionally filtered by status."""
+    return await session_service.list_sessions(status_filter, db)
+
+
+@router.get("/active", response_model=SessionDTO)
+async def get_active_session_by_telegram_id(
+    telegram_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+) -> SessionDTO:
+    """Find the active (running/paused/creating) session for a Telegram user."""
+    session = await session_service.get_active_session_by_telegram_id(telegram_id, db)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No active session for this user",
+        )
+    return session
 
 
 @router.post("", response_model=SessionDTO, status_code=status.HTTP_201_CREATED)
@@ -112,6 +138,21 @@ async def destroy_session(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
+@router.patch("/{session_id}/status", response_model=SessionDTO)
+async def update_session_status(
+    session_id: uuid.UUID,
+    payload: UpdateStatusRequest,
+    db: AsyncSession = Depends(get_db),
+) -> SessionDTO:
+    """Update just the status field of a session (used by cleanup/health)."""
+    try:
+        return await session_service.update_session_status(
+            session_id, payload.status, db
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
 @router.post("/{session_id}/exec")
 async def exec_command(
     session_id: uuid.UUID,
@@ -159,6 +200,9 @@ async def send_message(
 
     start_time = time.monotonic()
     container_id = session.container_id
+
+    # Bump last_activity_at so idle cleanup knows this session is alive.
+    await session_service.touch_session_activity(session_id, db)
 
     # Log the inbound message immediately.
     await message_service.log_message(

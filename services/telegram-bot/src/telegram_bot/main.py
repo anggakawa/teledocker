@@ -12,7 +12,7 @@ import json
 import logging
 
 from redis.asyncio import Redis
-from telegram import BotCommand, Update
+from telegram import BotCommand
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -136,10 +136,7 @@ async def listen_for_admin_notifications(
 
 async def _handle_admin_notification(application: Application, event: dict) -> None:
     """Forward a Redis notification event to admin Telegram users."""
-    from telegram_bot.keyboards import new_user_admin_keyboard
-
     event_type = event.get("event")
-    admin_ids = application.bot_data.get("admin_ids", [])
 
     if event_type == "user_approved":
         telegram_id = event["telegram_id"]
@@ -181,14 +178,24 @@ _BOT_COMMANDS = [
 
 
 async def main() -> None:
-    """Start the bot in polling or webhook mode depending on BOT_MODE."""
-    application = build_application()
-    await application.bot.set_my_commands(_BOT_COMMANDS)
+    """Start the bot in polling or webhook mode depending on BOT_MODE.
 
-    if settings.bot_mode == "webhook":
-        webhook_url = f"https://{settings.webhook_domain}/webhook"
-        async with application:
-            await application.start()
+    Both modes launch the Redis notification listener as a background task
+    so admin approval/rejection events are forwarded to Telegram in real time.
+    """
+    application = build_application()
+
+    async with application:
+        await application.bot.set_my_commands(_BOT_COMMANDS)
+        await application.start()
+
+        # Launch Redis pub/sub listener as a background task.
+        redis_task = asyncio.create_task(
+            listen_for_admin_notifications(application, settings.redis_url)
+        )
+
+        if settings.bot_mode == "webhook":
+            webhook_url = f"https://{settings.webhook_domain}/webhook"
             await application.updater.start_webhook(
                 listen="0.0.0.0",
                 port=8080,
@@ -197,12 +204,19 @@ async def main() -> None:
                 secret_token=settings.webhook_secret,
             )
             logger.info("Bot running in webhook mode at %s", webhook_url)
+        else:
+            # Polling mode -- Telegram is asked for updates every few seconds.
+            # No domain, no HTTPS, no Caddy needed. Perfect for local development.
+            await application.updater.start_polling(drop_pending_updates=True)
+            logger.info("Bot running in polling mode (no webhook required)")
+
+        # Run forever until the process is killed.
+        try:
             await asyncio.Event().wait()
-    else:
-        # Polling mode — Telegram is asked for updates every few seconds.
-        # No domain, no HTTPS, no Caddy needed. Perfect for local development.
-        logger.info("Bot running in polling mode (no webhook required)")
-        application.run_polling(drop_pending_updates=True)
+        finally:
+            redis_task.cancel()
+            await application.updater.stop()
+            await application.stop()
 
 
 if __name__ == "__main__":

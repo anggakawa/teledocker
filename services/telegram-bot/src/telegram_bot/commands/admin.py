@@ -104,12 +104,9 @@ async def setprovider_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     preset = _PROVIDER_PRESETS[preset_name]
-    # Keep the existing API key; only update provider metadata.
-    current_key = ""  # We don't have plaintext; user must re-set key if provider changes.
     try:
-        await api_client.set_api_key(
+        await api_client.update_provider(
             telegram_id=update.effective_user.id,
-            api_key=current_key or "placeholder",
             provider=preset["provider"],
             base_url=preset["base_url"],
         )
@@ -134,12 +131,12 @@ async def setbaseurl_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     base_url = context.args[0]
-    provider = user_dto.provider_config.get("provider", "custom") if user_dto.provider_config else "custom"
+    current_config = user_dto.provider_config or {}
+    provider = current_config.get("provider", "custom")
 
     try:
-        await api_client.set_api_key(
+        await api_client.update_provider(
             telegram_id=update.effective_user.id,
-            api_key="placeholder",
             provider=provider,
             base_url=base_url,
         )

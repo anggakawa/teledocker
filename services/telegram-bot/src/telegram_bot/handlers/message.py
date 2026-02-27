@@ -8,12 +8,14 @@ This is the primary interaction path:
 """
 
 import logging
+from uuid import UUID
 
 from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
 from chatops_shared.message_splitter import split_message
+from telegram_bot.commands.session import _get_session_id
 from telegram_bot.keyboards import no_session_keyboard
 
 logger = logging.getLogger(__name__)
@@ -41,8 +43,8 @@ async def default_message_handler(update: Update, context: ContextTypes.DEFAULT_
         )
         return
 
-    # Check there is an active session.
-    session_id = context.bot_data.get(f"session:{telegram_id}")
+    # Check there is an active session (cache + API fallback).
+    session_id = await _get_session_id(telegram_id, context)
     if session_id is None:
         await update.message.reply_text(
             "No active session. Create a container first.",
@@ -59,7 +61,7 @@ async def default_message_handler(update: Update, context: ContextTypes.DEFAULT_
     response_chunks: list[str] = []
     try:
         async for chunk in api_client.stream_message(
-            session_id=session_id,
+            session_id=UUID(session_id),
             text=update.message.text,
             telegram_msg_id=update.message.message_id,
         ):
