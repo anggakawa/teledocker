@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SessionStatus(str, Enum):
@@ -26,7 +26,9 @@ class SessionDTO(BaseModel):
     agent_type: str
     system_prompt: str | None
     last_activity_at: datetime
-    metadata: dict | None
+    # The SQLAlchemy attribute is `metadata_` (with underscore) because
+    # `metadata` collides with the inherited Base.metadata attribute.
+    metadata: dict | None = Field(default=None, alias="metadata_")
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
