@@ -17,9 +17,8 @@ RUN apt-get update && apt-get install -y \
     jq \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv for the agent bridge Python environment.
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:$PATH"
+# Install uv to a shared location so both root and user 1000 can use it.
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
 # Install Claude Code CLI.
 # NOTE: The real install URL is not publicly available yet.
@@ -36,12 +35,12 @@ RUN useradd --uid 1000 --create-home --shell /bin/bash chatops
 RUN mkdir -p /workspace && chown 1000:1000 /workspace
 RUN mkdir -p /opt/agent-bridge && chown 1000:1000 /opt/agent-bridge
 
-# Copy and install the agent bridge as the non-root user.
-COPY --chown=1000:1000 agent-bridge/ /opt/agent-bridge/
+# Switch to non-root user before installing the agent bridge so that
+# uv installs Python and .venv under ~chatops (not /root).
+USER 1000
+COPY --chown=1000:1000 images/claude-agent/agent-bridge/ /opt/agent-bridge/
 WORKDIR /opt/agent-bridge
 RUN uv sync
-
-USER 1000
 WORKDIR /workspace
 VOLUME ["/workspace"]
 
