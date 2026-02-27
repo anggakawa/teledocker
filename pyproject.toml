@@ -1,0 +1,18 @@
+[tool.uv.workspace]
+members = [
+    "packages/shared",
+    "services/api-server",
+    "services/container-manager",
+    "services/telegram-bot",
+    "images/claude-agent/agent-bridge",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["chatops_shared"]

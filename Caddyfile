@@ -1,0 +1,9 @@
+{WEBHOOK_DOMAIN} {
+    # Telegram webhook — only the /webhook path needs to be public.
+    handle /webhook {
+        reverse_proxy telegram-bot:8080
+    }
+
+    # Reject all other paths. The internal APIs are never exposed.
+    respond 404
+}

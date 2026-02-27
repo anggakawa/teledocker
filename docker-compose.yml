@@ -1,0 +1,133 @@
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - telegram-bot
+    networks:
+      - internal
+
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: services/telegram-bot/Dockerfile
+    restart: unless-stopped
+    environment:
+      - BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
+      - WEBHOOK_DOMAIN=${WEBHOOK_DOMAIN}
+      - API_SERVER_URL=http://api-server:8000
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
+      - ADMIN_TELEGRAM_IDS=${ADMIN_TELEGRAM_IDS}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      - api-server
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8080/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  api-server:
+    build:
+      context: .
+      dockerfile: services/api-server/Dockerfile
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://chatops:${POSTGRES_PASSWORD}@postgres/chatops
+      - REDIS_URL=redis://redis:6379
+      - ENCRYPTION_KEY_HEX=${ENCRYPTION_KEY}
+      - CONTAINER_MANAGER_URL=http://container-manager:8001
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
+      - ADMIN_TELEGRAM_IDS=${ADMIN_TELEGRAM_IDS}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  container-manager:
+    build:
+      context: .
+      dockerfile: services/container-manager/Dockerfile
+    restart: unless-stopped
+    environment:
+      - AGENT_IMAGE=${AGENT_IMAGE:-chatops/claude-agent:latest}
+      - MAX_CONTAINERS=${MAX_CONTAINERS:-20}
+      - WORKSPACE_BASE_PATH=/workspaces
+      - IDLE_TIMEOUT_MINUTES=${IDLE_TIMEOUT_MINUTES:-30}
+      - API_SERVER_URL=http://api-server:8000
+      - SERVICE_TOKEN=${SERVICE_TOKEN}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      # Docker socket: allows container-manager to manage user containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agent-workspaces:/workspaces
+    depends_on:
+      - api-server
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8001/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=chatops
+      - POSTGRES_USER=chatops
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatops -d chatops"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  redisdata:
+  agent-workspaces:
+  caddy-data:
+  caddy-config:
+
+networks:
+  internal:
+    driver: bridge
