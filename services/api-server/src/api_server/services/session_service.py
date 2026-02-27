@@ -224,15 +224,18 @@ async def destroy_sessions_by_status(
     result = await db.execute(
         select(Session).where(Session.status == status_filter)
     )
-    sessions = result.scalars().all()
+    # Extract IDs upfront: after db.commit()/rollback() inside the loop,
+    # SQLAlchemy expires ORM objects. Accessing .id on an expired object
+    # triggers a lazy load, which fails with MissingGreenlet under AsyncSession.
+    session_ids = [s.id for s in result.scalars().all()]
 
     destroyed = 0
     failed = 0
 
-    for session in sessions:
+    for session_id in session_ids:
         try:
             await destroy_session(
-                session_id=session.id,
+                session_id=session_id,
                 container_manager_url=container_manager_url,
                 service_token=service_token,
                 db=db,
@@ -240,7 +243,7 @@ async def destroy_sessions_by_status(
             destroyed += 1
         except Exception:
             logger.exception(
-                "Failed to destroy session %s during bulk cleanup", session.id
+                "Failed to destroy session %s during bulk cleanup", session_id
             )
             await db.rollback()
             failed += 1
