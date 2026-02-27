@@ -16,3 +16,6 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["chatops_shared"]
+
+[tool.pytest.ini_options]
+import_mode = "importlib"

@@ -21,3 +21,10 @@ packages = ["src/telegram_bot"]
 
 [tool.uv.sources]
 chatops-shared = { workspace = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
+
+[dependency-groups]
+dev = ["pytest>=8.0.0"]
