@@ -1,7 +1,10 @@
 """Telegram bot entry point — webhook setup and handler registration.
 
-The bot runs in webhook mode (not polling) for production use.
-Caddy handles HTTPS termination; the bot listens on HTTP port 8080.
+Supports two modes controlled by the BOT_MODE environment variable:
+- polling (default): long-poll Telegram for updates. No domain or server needed.
+  Use this for local development.
+- webhook: Telegram pushes updates to your public HTTPS URL. Use for production.
+  Requires WEBHOOK_DOMAIN and WEBHOOK_SECRET to be set.
 """
 
 import asyncio
@@ -162,38 +165,44 @@ async def _handle_admin_notification(application: Application, event: dict) -> N
             logger.warning("Could not notify rejected user %s: %s", telegram_id, exc)
 
 
+_BOT_COMMANDS = [
+    BotCommand("start", "Register and get started"),
+    BotCommand("new", "Create a new container session"),
+    BotCommand("stop", "Stop active container"),
+    BotCommand("restart", "Restart active container"),
+    BotCommand("status", "Show container status"),
+    BotCommand("shell", "Execute a shell command"),
+    BotCommand("download", "Download a file from container"),
+    BotCommand("setkey", "Store your API key"),
+    BotCommand("provider", "Show provider config"),
+    BotCommand("help", "Show all commands"),
+    BotCommand("myid", "Show your Telegram ID"),
+]
+
+
 async def main() -> None:
-    """Start the bot in webhook mode."""
+    """Start the bot in polling or webhook mode depending on BOT_MODE."""
     application = build_application()
+    await application.bot.set_my_commands(_BOT_COMMANDS)
 
-    webhook_url = f"https://{settings.webhook_domain}/webhook"
-
-    await application.bot.set_my_commands([
-        BotCommand("start", "Register and get started"),
-        BotCommand("new", "Create a new container session"),
-        BotCommand("stop", "Stop active container"),
-        BotCommand("restart", "Restart active container"),
-        BotCommand("status", "Show container status"),
-        BotCommand("shell", "Execute a shell command"),
-        BotCommand("download", "Download a file from container"),
-        BotCommand("setkey", "Store your API key"),
-        BotCommand("provider", "Show provider config"),
-        BotCommand("help", "Show all commands"),
-        BotCommand("myid", "Show your Telegram ID"),
-    ])
-
-    async with application:
-        await application.start()
-        await application.updater.start_webhook(
-            listen="0.0.0.0",
-            port=8080,
-            url_path="/webhook",
-            webhook_url=webhook_url,
-            secret_token=settings.webhook_secret,
-        )
-        logger.info("Bot webhook started at %s", webhook_url)
-        # Keep running until the process is killed.
-        await asyncio.Event().wait()
+    if settings.bot_mode == "webhook":
+        webhook_url = f"https://{settings.webhook_domain}/webhook"
+        async with application:
+            await application.start()
+            await application.updater.start_webhook(
+                listen="0.0.0.0",
+                port=8080,
+                url_path="/webhook",
+                webhook_url=webhook_url,
+                secret_token=settings.webhook_secret,
+            )
+            logger.info("Bot running in webhook mode at %s", webhook_url)
+            await asyncio.Event().wait()
+    else:
+        # Polling mode — Telegram is asked for updates every few seconds.
+        # No domain, no HTTPS, no Caddy needed. Perfect for local development.
+        logger.info("Bot running in polling mode (no webhook required)")
+        application.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":

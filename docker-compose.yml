@@ -21,8 +21,9 @@ services:
     restart: unless-stopped
     environment:
       - BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - WEBHOOK_SECRET=${WEBHOOK_SECRET}
-      - WEBHOOK_DOMAIN=${WEBHOOK_DOMAIN}
+      - BOT_MODE=${BOT_MODE:-polling}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      - WEBHOOK_DOMAIN=${WEBHOOK_DOMAIN:-}
       - API_SERVER_URL=http://api-server:8000
       - SERVICE_TOKEN=${SERVICE_TOKEN}
       - ADMIN_TELEGRAM_IDS=${ADMIN_TELEGRAM_IDS}
