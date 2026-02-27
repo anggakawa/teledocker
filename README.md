@@ -1,6 +1,6 @@
-# ChatOps AI Bridge
+# Teledocker
 
-A Telegram bot that provisions per-user Docker containers running Claude Code.
+A Telegram bot that provisions per-user Docker containers running AI Agents/Claude Code.
 Each user gets an isolated sandbox with persistent workspace, streamed responses,
 and file upload/download — all managed through Telegram commands.
 
