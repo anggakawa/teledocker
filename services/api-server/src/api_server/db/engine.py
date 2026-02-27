@@ -53,7 +53,7 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     async with factory() as session:
         try:
             yield session
-        except Exception:
+        except BaseException:
             await session.rollback()
             raise
 

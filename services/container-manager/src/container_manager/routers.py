@@ -60,10 +60,12 @@ class CreateContainerRequest(BaseModel):
 
 class ExecCommandRequest(BaseModel):
     command: str
+    env_vars: dict[str, str] = {}
 
 
 class SendMessageRequest(BaseModel):
     text: str
+    env_vars: dict[str, str] = {}
 
 
 @router.post("/containers", status_code=status.HTTP_201_CREATED)
@@ -157,12 +159,17 @@ async def send_message_to_agent(
     container_name = await docker.get_container_name(container_id)
 
     async def generate():
+        chunk_count = 0
         try:
             uri = f"ws://{container_name}:9100"
+            logger.info("Connecting to agent-bridge at %s", uri)
             async with websockets.connect(uri, open_timeout=10) as ws:
                 request_payload = json.dumps({
                     "method": "execute_prompt",
-                    "params": {"prompt": payload.text},
+                    "params": {
+                        "prompt": payload.text,
+                        "env_vars": payload.env_vars,
+                    },
                     "id": "1",
                 })
                 await ws.send(request_payload)
@@ -171,16 +178,28 @@ async def send_message_to_agent(
                 async for raw_frame in ws:
                     frame = json.loads(raw_frame)
                     if frame.get("error"):
+                        logger.warning(
+                            "Agent-bridge error for container %s: %s",
+                            container_id, frame["error"],
+                        )
                         yield f"data: {json.dumps({'error': frame['error']})}\n\n"
                         break
                     chunk = frame.get("chunk", "")
                     if chunk:
+                        chunk_count += 1
                         yield f"data: {json.dumps({'chunk': chunk})}\n\n"
                     if frame.get("done", False):
                         break
         except Exception as exc:
+            logger.exception(
+                "WebSocket error for container %s: %s", container_id, exc,
+            )
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"
         finally:
+            logger.info(
+                "Agent message stream ended for container %s: %d chunks",
+                container_id, chunk_count,
+            )
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")

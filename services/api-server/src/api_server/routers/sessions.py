@@ -5,6 +5,7 @@ so Telegram bot can start forwarding chunks immediately without waiting for
 the full response to complete. This is critical for long-running AI responses.
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -19,10 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chatops_shared.schemas.message import ExecRequest, SendMessageRequest
 from chatops_shared.schemas.session import SessionDTO
 
-from api_server.config import settings
+from api_server.config import ApiServerSettings, settings
 from api_server.db.engine import get_db, get_db_session
+from api_server.db.models import User
 from api_server.dependencies import verify_service_token
 from api_server.services import message_service, session_service
+from api_server.services.user_service import get_decrypted_api_key, get_user_model_by_id
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +49,61 @@ class NewSessionRequest(BaseModel):
 
 class UpdateStatusRequest(BaseModel):
     status: str
+
+
+def _build_env_vars(user: User, app_settings: ApiServerSettings) -> dict[str, str]:
+    """Build Claude CLI env vars from the user's API key and provider config.
+
+    Returns an empty dict if no API key is stored — the agent will run
+    without credentials (and Claude CLI will complain about login).
+    """
+    api_key = get_decrypted_api_key(user, app_settings)
+    if not api_key:
+        return {}
+
+    provider_config = user.provider_config or {}
+    provider = provider_config.get("provider", "anthropic")
+    base_url = provider_config.get("base_url")
+
+    if provider == "anthropic":
+        return {"ANTHROPIC_API_KEY": api_key}
+
+    # OpenRouter or custom provider — use base URL + auth token.
+    env: dict[str, str] = {
+        "ANTHROPIC_AUTH_TOKEN": api_key,
+        "ANTHROPIC_API_KEY": "",  # Must be explicitly empty
+    }
+    if base_url:
+        env["ANTHROPIC_BASE_URL"] = base_url
+    return env
+
+
+async def _log_outbound_message(
+    session_id: uuid.UUID,
+    full_response: str,
+    elapsed_ms: int,
+) -> None:
+    """Log an outbound AI response in a fire-and-forget task.
+
+    Runs in its own DB session so it is not subject to the SSE generator's
+    cancellation scope. Errors are logged but never propagated — the user
+    already received the streamed response, so a logging failure should not
+    affect them.
+    """
+    try:
+        async with get_db_session() as db:
+            await message_service.log_message(
+                session_id=session_id,
+                direction="outbound",
+                content_type="text",
+                content=full_response,
+                db=db,
+                processing_ms=elapsed_ms,
+            )
+    except Exception:
+        logger.exception(
+            "Failed to log outbound message for session %s", session_id
+        )
 
 
 @router.get("", response_model=list[SessionDTO])
@@ -166,13 +224,17 @@ async def exec_command(
 
     container_id = session.container_id
 
+    # Fetch env vars so exec'd commands that invoke Claude CLI have credentials.
+    user = await get_user_model_by_id(session.user_id, db)
+    env_vars = _build_env_vars(user, settings) if user else {}
+
     async def generate():
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
                 async with client.stream(
                     "POST",
                     f"{settings.container_manager_url}/containers/{container_id}/exec",
-                    json={"command": payload.command},
+                    json={"command": payload.command, "env_vars": env_vars},
                     headers={"X-Service-Token": settings.service_token},
                 ) as response:
                     async for line in response.aiter_lines():
@@ -205,6 +267,16 @@ async def send_message(
     start_time = time.monotonic()
     container_id = session.container_id
 
+    # Fetch the user model to build per-message env vars (API key + provider).
+    user = await get_user_model_by_id(session.user_id, db)
+    env_vars = _build_env_vars(user, settings) if user else {}
+
+    has_env_vars = bool(env_vars)
+    logger.info(
+        "send_message session=%s container=%s has_env_vars=%s",
+        session_id, container_id, has_env_vars,
+    )
+
     # Bump last_activity_at so idle cleanup knows this session is alive.
     await session_service.touch_session_activity(session_id, db)
 
@@ -221,12 +293,13 @@ async def send_message(
     full_response_parts: list[str] = []
 
     async def generate():
+        chunk_count = 0
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
                 async with client.stream(
                     "POST",
                     f"{settings.container_manager_url}/containers/{container_id}/message",
-                    json={"text": payload.text},
+                    json={"text": payload.text, "env_vars": env_vars},
                     headers={"X-Service-Token": settings.service_token},
                 ) as response:
                     async for line in response.aiter_lines():
@@ -236,6 +309,7 @@ async def send_message(
                         if payload_data == "[DONE]":
                             break
                         yield f"data: {payload_data}\n\n"
+                        chunk_count += 1
                         # Extract readable text for database logging.
                         try:
                             chunk = json.loads(payload_data).get("chunk", "")
@@ -249,21 +323,18 @@ async def send_message(
         finally:
             yield "data: [DONE]\n\n"
 
-            # Log outbound response in a fresh DB session. The request-scoped
-            # session may already be closed by the time streaming finishes,
-            # because FastAPI's dependency lifecycle ends when the handler
-            # returns StreamingResponse — the generator runs after that.
+            # Log outbound response in a fire-and-forget task. This runs
+            # outside the SSE generator's cancel scope, so CancelledError
+            # from client disconnect won't corrupt the DB session.
             elapsed_ms = int((time.monotonic() - start_time) * 1000)
             full_response = "".join(full_response_parts)
-            async with get_db_session() as fresh_db:
-                await message_service.log_message(
-                    session_id=session_id,
-                    direction="outbound",
-                    content_type="text",
-                    content=full_response,
-                    db=fresh_db,
-                    processing_ms=elapsed_ms,
-                )
+            logger.info(
+                "send_message done session=%s chunks=%d response_len=%d elapsed_ms=%d",
+                session_id, chunk_count, len(full_response), elapsed_ms,
+            )
+            asyncio.create_task(
+                _log_outbound_message(session_id, full_response, elapsed_ms)
+            )
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

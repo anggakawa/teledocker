@@ -78,11 +78,13 @@ class ClaudeCodeRunner:
         self._has_session = True
 
         # Stream stdout line-by-line as the subprocess produces output.
+        line_count = 0
         try:
             async with asyncio.timeout(_PROCESS_TIMEOUT_SECONDS):
                 async for raw_line in process.stdout:
                     line = raw_line.decode("utf-8", errors="replace").rstrip("\n")
                     if line.strip():
+                        line_count += 1
                         yield line
         except TimeoutError:
             process.kill()
@@ -91,12 +93,21 @@ class ClaudeCodeRunner:
 
         await process.wait()
 
-        # Report stderr only if the process failed.
+        # Always read stderr for diagnostics — Claude CLI may print warnings
+        # even on success (e.g. session state conflicts, deprecation notices).
+        stderr_bytes = await process.stderr.read()
+        stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+
+        logger.info(
+            "Claude Code finished: cmd=%s returncode=%s stdout_lines=%d stderr_len=%d",
+            cmd, process.returncode, line_count, len(stderr_text),
+        )
+
         if process.returncode != 0:
-            stderr_bytes = await process.stderr.read()
-            error_text = stderr_bytes.decode("utf-8", errors="replace").strip()
-            logger.error("Claude Code exited with code %s: %s", process.returncode, error_text)
-            yield f"Error: {error_text}"
+            logger.error("Claude Code stderr (rc=%s): %s", process.returncode, stderr_text)
+            yield f"Error: {stderr_text}"
+        elif stderr_text:
+            logger.warning("Claude Code stderr (rc=0): %s", stderr_text)
 
     async def run_shell(self, command: str) -> AsyncGenerator[str, None]:
         """Run an arbitrary shell command and stream stdout/stderr.
