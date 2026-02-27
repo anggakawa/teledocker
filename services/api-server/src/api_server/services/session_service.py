@@ -207,6 +207,47 @@ async def destroy_session(
     logger.info("Destroyed session %s", session_id)
 
 
+async def destroy_sessions_by_status(
+    status_filter: str,
+    container_manager_url: str,
+    service_token: str,
+    db: AsyncSession,
+) -> dict[str, int]:
+    """Destroy all sessions matching the given status.
+
+    Loops through each matching session and calls destroy_session(),
+    which handles both container cleanup and DB deletion. Continues
+    on individual failures so one stuck container does not block the rest.
+
+    Returns {"destroyed": N, "failed": N}.
+    """
+    result = await db.execute(
+        select(Session).where(Session.status == status_filter)
+    )
+    sessions = result.scalars().all()
+
+    destroyed = 0
+    failed = 0
+
+    for session in sessions:
+        try:
+            await destroy_session(
+                session_id=session.id,
+                container_manager_url=container_manager_url,
+                service_token=service_token,
+                db=db,
+            )
+            destroyed += 1
+        except Exception:
+            logger.exception(
+                "Failed to destroy session %s during bulk cleanup", session.id
+            )
+            await db.rollback()
+            failed += 1
+
+    return {"destroyed": destroyed, "failed": failed}
+
+
 async def list_sessions(
     status_filter: str | None, db: AsyncSession
 ) -> list[SessionDTO]:

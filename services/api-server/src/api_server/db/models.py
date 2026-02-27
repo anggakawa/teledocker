@@ -105,7 +105,7 @@ class Session(Base):
 
     user: Mapped["User"] = relationship("User", back_populates="sessions")
     messages: Mapped[list["Message"]] = relationship(
-        "Message", back_populates="session"
+        "Message", back_populates="session", cascade="all, delete-orphan"
     )
 
 
@@ -119,7 +119,7 @@ class Message(Base):
         Uuid(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("sessions.id"), nullable=False
+        Uuid(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
     )
     direction: Mapped[str] = mapped_column(_message_direction_enum, nullable=False)
     content_type: Mapped[str] = mapped_column(_content_type_enum, nullable=False)

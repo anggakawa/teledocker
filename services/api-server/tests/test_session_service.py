@@ -64,6 +64,141 @@ def _make_http_status_error(status_code: int) -> httpx.HTTPStatusError:
 # ---------------------------------------------------------------------------
 
 
+class TestDestroySessionsByStatus:
+    """Verify bulk destroy by status iterates sessions and collects results."""
+
+    @pytest.mark.asyncio
+    async def test_destroys_all_matching_sessions(self):
+        """All sessions with the target status should be destroyed."""
+        from api_server.services.session_service import destroy_sessions_by_status
+
+        sessions = [_make_mock_session() for _ in range(3)]
+        db = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = sessions
+        db.execute.return_value = result_mock
+
+        with patch(
+            f"{_MODULE}.destroy_session",
+            new_callable=AsyncMock,
+        ) as mock_destroy:
+            result = await destroy_sessions_by_status(
+                status_filter="error",
+                container_manager_url="http://container-manager:8001",
+                service_token="test-token",
+                db=db,
+            )
+
+        assert result == {"destroyed": 3, "failed": 0}
+        assert mock_destroy.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_no_sessions_match(self):
+        """Empty result set should return zeroed counts."""
+        from api_server.services.session_service import destroy_sessions_by_status
+
+        db = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = []
+        db.execute.return_value = result_mock
+
+        result = await destroy_sessions_by_status(
+            status_filter="error",
+            container_manager_url="http://container-manager:8001",
+            service_token="test-token",
+            db=db,
+        )
+
+        assert result == {"destroyed": 0, "failed": 0}
+
+    @pytest.mark.asyncio
+    async def test_counts_failures_separately(self):
+        """Individual destroy failures should be counted, not stop the loop."""
+        from api_server.services.session_service import destroy_sessions_by_status
+
+        sessions = [_make_mock_session() for _ in range(3)]
+        db = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = sessions
+        db.execute.return_value = result_mock
+
+        # First and third succeed, second fails.
+        side_effects = [None, RuntimeError("container stuck"), None]
+        with patch(
+            f"{_MODULE}.destroy_session",
+            new_callable=AsyncMock,
+            side_effect=side_effects,
+        ):
+            result = await destroy_sessions_by_status(
+                status_filter="error",
+                container_manager_url="http://container-manager:8001",
+                service_token="test-token",
+                db=db,
+            )
+
+        assert result == {"destroyed": 2, "failed": 1}
+
+    @pytest.mark.asyncio
+    async def test_rollback_called_on_failure_so_loop_continues(self):
+        """After a destroy failure, db.rollback() must be called to reset
+        the transaction so subsequent iterations don't hit PendingRollbackError.
+        """
+        from api_server.services.session_service import destroy_sessions_by_status
+
+        sessions = [_make_mock_session() for _ in range(3)]
+        db = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = sessions
+        db.execute.return_value = result_mock
+
+        # Second call fails; first and third succeed.
+        side_effects = [None, RuntimeError("IntegrityError simulation"), None]
+        with patch(
+            f"{_MODULE}.destroy_session",
+            new_callable=AsyncMock,
+            side_effect=side_effects,
+        ):
+            result = await destroy_sessions_by_status(
+                status_filter="error",
+                container_manager_url="http://container-manager:8001",
+                service_token="test-token",
+                db=db,
+            )
+
+        assert result == {"destroyed": 2, "failed": 1}
+        # Rollback must have been called exactly once (on the single failure).
+        db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_passes_correct_args_to_destroy_session(self):
+        """Each destroy_session call must receive the right session_id and config."""
+        from api_server.services.session_service import destroy_sessions_by_status
+
+        session = _make_mock_session()
+        db = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = [session]
+        db.execute.return_value = result_mock
+
+        with patch(
+            f"{_MODULE}.destroy_session",
+            new_callable=AsyncMock,
+        ) as mock_destroy:
+            await destroy_sessions_by_status(
+                status_filter="paused",
+                container_manager_url="http://cm:8001",
+                service_token="tok",
+                db=db,
+            )
+
+        mock_destroy.assert_called_once_with(
+            session_id=session.id,
+            container_manager_url="http://cm:8001",
+            service_token="tok",
+            db=db,
+        )
+
+
 class TestDestroySessionNotFoundHandling:
     """Verify destroy_session cleans up DB even when container is gone."""
 
