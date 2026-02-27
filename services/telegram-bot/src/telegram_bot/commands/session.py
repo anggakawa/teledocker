@@ -7,7 +7,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from telegram_bot.api_client import ApiClient
-from telegram_bot.formatters import format_status
+from telegram_bot.formatters import escape_markdown_v2, format_status
 from telegram_bot.keyboards import (
     confirm_destroy_keyboard,
     confirm_stop_keyboard,
@@ -85,11 +85,13 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         # Store session ID in bot_data so all handlers can find it.
         context.bot_data[f"session:{update.effective_user.id}"] = str(session.id)
 
+        status = escape_markdown_v2(session.status)
+        name = escape_markdown_v2(session.container_name)
         await status_msg.edit_text(
-            f"Container ready!\n"
-            f"Name: `{session.container_name}`\n"
-            f"Status: {session.status}\n\n"
-            "Send any message to start chatting with Claude Code.",
+            f"Container ready\\!\n"
+            f"Name: `{name}`\n"
+            f"Status: {status}\n\n"
+            "Send any message to start chatting with Claude Code\\.",
             parse_mode="MarkdownV2",
         )
     except Exception as exc:
