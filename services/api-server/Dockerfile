@@ -7,6 +7,7 @@ RUN pip install uv --no-cache-dir
 
 # Copy workspace root and shared package first so Docker can cache this layer.
 COPY pyproject.toml /workspace/pyproject.toml
+COPY uv.lock /workspace/uv.lock
 COPY packages/shared /workspace/packages/shared
 COPY services/api-server /workspace/services/api-server
 

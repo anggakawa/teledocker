@@ -39,7 +39,7 @@ RUN mkdir -p /opt/agent-bridge && chown 1000:1000 /opt/agent-bridge
 # Copy and install the agent bridge as the non-root user.
 COPY --chown=1000:1000 agent-bridge/ /opt/agent-bridge/
 WORKDIR /opt/agent-bridge
-RUN uv sync --frozen
+RUN uv sync
 
 USER 1000
 WORKDIR /workspace

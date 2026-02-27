@@ -5,6 +5,7 @@ WORKDIR /app
 RUN pip install uv --no-cache-dir
 
 COPY pyproject.toml /workspace/pyproject.toml
+COPY uv.lock /workspace/uv.lock
 COPY packages/shared /workspace/packages/shared
 COPY services/container-manager /workspace/services/container-manager
 
