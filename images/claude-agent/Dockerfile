@@ -10,8 +10,6 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     python3 \
     python3-pip \
-    nodejs \
-    npm \
     wget \
     unzip \
     jq \
@@ -20,15 +18,12 @@ RUN apt-get update && apt-get install -y \
 # Install uv to a shared location so both root and user 1000 can use it.
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
-# Install Claude Code CLI.
-# NOTE: The real install URL is not publicly available yet.
-# Uncomment the line below when the official installer is released:
-# RUN curl -fsSL https://claude.ai/install.sh | bash
-# ENV PATH="/root/.claude/bin:$PATH"
-#
-# For development/testing without the real binary, install a stub:
-RUN printf '#!/bin/bash\necho "Claude Code stub: $@"\ncat -\n' > /usr/local/bin/claude \
-    && chmod +x /usr/local/bin/claude
+# Install Claude Code CLI via official standalone installer.
+# Installs as root, then symlink to /usr/local/bin so the non-root
+# user (uid 1000) can invoke it without modifying PATH.
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && cp /root/.local/bin/claude /usr/local/bin/claude \
+    && chmod 755 /usr/local/bin/claude
 
 # Create non-root user (uid 1000) for all container operations.
 RUN useradd --uid 1000 --create-home --shell /bin/bash chatops
