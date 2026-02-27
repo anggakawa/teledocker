@@ -73,14 +73,25 @@ async def create_container(
     _: None = Depends(verify_token),
 ) -> dict:
     """Create and start a new agent container for a user session."""
-    container_id = await docker.create_container(
-        container_name=payload.container_name,
-        user_id=payload.user_id,
-        env_vars=payload.env_vars,
-        agent_image=settings.agent_image,
-        workspace_base_path=settings.workspace_base_path,
-        agent_network=settings.agent_network,
-    )
+    try:
+        container_id = await docker.create_container(
+            container_name=payload.container_name,
+            user_id=payload.user_id,
+            env_vars=payload.env_vars,
+            agent_image=settings.agent_image,
+            workspace_base_path=settings.workspace_base_path,
+            agent_network=settings.agent_network,
+        )
+    except Exception as exc:
+        logger.exception(
+            "Failed to create container %s for user %s",
+            payload.container_name,
+            payload.user_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Container creation failed: {exc}",
+        ) from exc
     return {"container_id": container_id, "container_name": payload.container_name}
 
 

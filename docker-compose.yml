@@ -5,6 +5,8 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    environment:
+      - WEBHOOK_DOMAIN=${WEBHOOK_DOMAIN:-localhost}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -30,12 +32,14 @@ services:
       - REDIS_URL=redis://redis:6379
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     depends_on:
-      - api-server
-      - redis
+      api-server:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - internal
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8080/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -61,7 +65,7 @@ services:
     networks:
       - internal
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -90,10 +94,20 @@ services:
       - internal
       - agent-net
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8001/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
       interval: 15s
       timeout: 5s
       retries: 3
+
+  # Build-only service: produces the chatops/claude-agent:latest image that
+  # container-manager uses to spin up per-user containers at runtime.
+  claude-agent:
+    build:
+      context: .
+      dockerfile: images/claude-agent/Dockerfile
+    image: chatops/claude-agent:latest
+    profiles:
+      - build
 
   postgres:
     image: postgres:16-alpine
@@ -137,4 +151,5 @@ networks:
   internal:
     driver: bridge
   agent-net:
+    name: agent-net
     driver: bridge
