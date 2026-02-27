@@ -11,12 +11,14 @@ import asyncio
 import json
 import logging
 
+import httpx
 from redis.asyncio import Redis
-from telegram import BotCommand
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
+    ContextTypes,
     MessageHandler,
     filters,
 )
@@ -24,6 +26,7 @@ from telegram.ext import (
 from telegram_bot.api_client import ApiClient
 from telegram_bot.commands.admin import (
     approve_command,
+    containers_command,
     provider_command,
     reject_command,
     removekey_command,
@@ -52,6 +55,32 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-5s %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global error handler — catches unhandled exceptions from all handlers.
+
+    Logs the full traceback and sends a user-friendly message so the user
+    is never left staring at silence after a failed command.
+    """
+    logger.exception(
+        "Unhandled exception while processing update",
+        exc_info=context.error,
+    )
+
+    # Non-update errors (e.g. polling failures) — nothing to reply to.
+    if not isinstance(update, Update) or update.effective_message is None:
+        return
+
+    if isinstance(context.error, (httpx.ConnectError, httpx.TimeoutException)):
+        text = (
+            "The API server is currently unreachable. "
+            "Please try again in a moment."
+        )
+    else:
+        text = "Something went wrong. Please try again later."
+
+    await update.effective_message.reply_text(text)
 
 
 def build_application() -> Application:
@@ -91,6 +120,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("reject", reject_command))
     application.add_handler(CommandHandler("revoke", revoke_command))
     application.add_handler(CommandHandler("users", users_command))
+    application.add_handler(CommandHandler("containers", containers_command))
 
     # File upload handler — triggered when user sends a document.
     application.add_handler(
@@ -104,6 +134,8 @@ def build_application() -> Application:
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, default_message_handler)
     )
+
+    application.add_error_handler(error_handler)
 
     return application
 

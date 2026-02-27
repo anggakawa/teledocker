@@ -35,6 +35,7 @@ async def lifespan(app: FastAPI):
         api_server_url=settings.api_server_url,
         service_token=settings.service_token,
         idle_timeout_minutes=settings.idle_timeout_minutes,
+        destroy_timeout_hours=settings.destroy_timeout_hours,
     )
     idle_cleaner.start()
 

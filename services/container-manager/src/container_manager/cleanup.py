@@ -1,10 +1,13 @@
-"""Background task that pauses idle containers to free CPU and memory.
+"""Background task that pauses idle containers and destroys stale ones.
 
-Every 5 minutes, fetches all running sessions and pauses any container
-whose last_activity_at is older than the configured idle timeout.
+Every 5 minutes:
+  1. Pause running containers idle beyond idle_timeout_minutes.
+  2. Destroy paused/stopped/error containers idle beyond destroy_timeout_hours.
 
 Using docker pause (cgroups freezer) instead of docker stop means the
-container resumes instantly (< 1s) on the next user message.
+container resumes instantly (< 1s) on the next user message.  Containers
+that stay paused for too long are eventually destroyed to free Docker
+resources (disk, cgroups entries, volume storage).
 """
 
 import asyncio
@@ -20,8 +23,11 @@ logger = logging.getLogger(__name__)
 _CLEANUP_INTERVAL_SECONDS = 5 * 60  # 5 minutes
 
 
+_DESTROYABLE_STATUSES = {"paused", "stopped", "error"}
+
+
 class IdleContainerCleaner:
-    """Background task that pauses containers idle beyond the timeout."""
+    """Background task that pauses idle containers and destroys stale ones."""
 
     def __init__(
         self,
@@ -29,17 +35,21 @@ class IdleContainerCleaner:
         api_server_url: str,
         service_token: str,
         idle_timeout_minutes: int,
+        destroy_timeout_hours: int = 24,
     ):
         self._docker = docker_client
         self._api_server_url = api_server_url
         self._service_token = service_token
         self._idle_timeout_minutes = idle_timeout_minutes
+        self._destroy_timeout_hours = destroy_timeout_hours
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._cleanup_loop())
         logger.info(
-            "Idle container cleaner started (timeout=%s min)", self._idle_timeout_minutes
+            "Idle container cleaner started (pause=%s min, destroy=%s h)",
+            self._idle_timeout_minutes,
+            self._destroy_timeout_hours,
         )
 
     async def stop(self) -> None:
@@ -54,6 +64,7 @@ class IdleContainerCleaner:
         while True:
             await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
             await self._pause_idle_containers()
+            await self._destroy_stale_containers()
 
     async def _pause_idle_containers(self) -> None:
         """Pause all running containers that have been idle too long."""
@@ -104,3 +115,56 @@ class IdleContainerCleaner:
                 )
         except Exception as exc:
             logger.warning("Failed to update session %s status to paused: %s", session_id, exc)
+
+    # ------------------------------------------------------------------
+    # Stale container destruction
+    # ------------------------------------------------------------------
+
+    async def _destroy_stale_containers(self) -> None:
+        """Destroy paused/stopped/error containers idle beyond the destroy timeout."""
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{self._api_server_url}/api/v1/sessions",
+                    headers={"X-Service-Token": self._service_token},
+                )
+                if response.status_code != 200:
+                    return
+                sessions = response.json()
+        except Exception as exc:
+            logger.warning("Destroy cleaner failed to fetch sessions: %s", exc)
+            return
+
+        now = datetime.now(timezone.utc)
+        destroy_threshold_seconds = self._destroy_timeout_hours * 3600
+
+        for session in sessions:
+            status = session.get("status")
+            if status not in _DESTROYABLE_STATUSES:
+                continue
+
+            last_activity_str = session.get("last_activity_at")
+            if not last_activity_str:
+                continue
+
+            last_activity = datetime.fromisoformat(last_activity_str)
+            idle_seconds = (now - last_activity).total_seconds()
+
+            if idle_seconds > destroy_threshold_seconds:
+                await self._destroy_session(session["id"])
+
+    async def _destroy_session(self, session_id: str) -> None:
+        """Destroy a session via the api-server so both container and DB record are cleaned up."""
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.delete(
+                    f"{self._api_server_url}/api/v1/sessions/{session_id}",
+                    headers={"X-Service-Token": self._service_token},
+                )
+                if response.status_code == 404:
+                    logger.debug("Session %s already destroyed", session_id)
+                    return
+                response.raise_for_status()
+            logger.info("Auto-destroyed stale session %s", session_id)
+        except Exception as exc:
+            logger.warning("Failed to auto-destroy session %s: %s", session_id, exc)

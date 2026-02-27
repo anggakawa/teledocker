@@ -15,6 +15,9 @@ class ContainerManagerSettings(SharedSettings):
     # Minutes of inactivity before a container is paused.
     idle_timeout_minutes: int = 30
 
+    # Hours a paused/stopped container sits before auto-destruction.
+    destroy_timeout_hours: int = 24
+
     # URL of the API server (used by health monitor to update session status).
     api_server_url: str = "http://api-server:8000"
 

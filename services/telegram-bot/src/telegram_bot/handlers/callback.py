@@ -13,6 +13,7 @@ Examples:
 import logging
 from uuid import UUID
 
+import httpx
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -43,6 +44,8 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         await _handle_destroy_recreate(query, context, payload)
     elif action == "restart":
         await _handle_restart(query, context, payload)
+    elif action == "admin_destroy":
+        await _handle_admin_destroy_session(query, context, payload)
     elif action == "action":
         await _handle_generic_action(query, context, payload)
     else:
@@ -167,3 +170,26 @@ async def _handle_generic_action(query, context, action: str) -> None:
         "provider_help": "Use /setprovider anthropic|openrouter|custom to configure your provider.",
     }
     await query.edit_message_text(responses.get(action, f"Action: {action}"))
+
+
+async def _handle_admin_destroy_session(query, context, session_id: str) -> None:
+    """Admin destroys a session from the /containers listing."""
+    admin_ids = context.bot_data.get("admin_ids", [])
+    if query.from_user.id not in admin_ids:
+        await query.edit_message_text("Only admins can destroy sessions.")
+        return
+
+    api_client = context.bot_data["api_client"]
+
+    try:
+        await api_client.destroy_session(UUID(session_id))
+        await query.edit_message_text(f"Session {session_id[:8]}... destroyed.")
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            await query.edit_message_text("Session already destroyed.")
+        else:
+            logger.exception("Failed to destroy session %s: %s", session_id, exc)
+            await query.edit_message_text(f"Destroy failed: {exc}")
+    except Exception as exc:
+        logger.exception("Failed to destroy session %s: %s", session_id, exc)
+        await query.edit_message_text(f"Destroy failed: {exc}")

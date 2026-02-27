@@ -9,6 +9,9 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
+from telegram_bot.formatters import format_session_list_for_admin
+from telegram_bot.keyboards import admin_sessions_keyboard
+
 logger = logging.getLogger(__name__)
 
 _PROVIDER_PRESETS = {
@@ -268,3 +271,33 @@ async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         lines.append(f"- {u.display_name} {username} ({u.telegram_id}) {role_tag} {approved_tag}")
 
     await update.message.reply_text("\n".join(lines))
+
+
+@_require_admin
+async def containers_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin: list all container sessions with destroy buttons."""
+    api_client = context.bot_data["api_client"]
+
+    sessions = await api_client.list_sessions()
+    if not sessions:
+        await update.message.reply_text("No sessions found.")
+        return
+
+    # Fetch all users in one call and build a lookup by user_id.
+    users = await api_client.list_users()
+    user_by_id = {u.id: u for u in users}
+
+    sessions_with_users = [
+        (session, user_by_id.get(session.user_id))
+        for session in sessions
+    ]
+
+    text = format_session_list_for_admin(sessions_with_users)
+
+    keyboard_entries = [
+        (index, str(session.id))
+        for index, (session, _) in enumerate(sessions_with_users, start=1)
+    ]
+    keyboard = admin_sessions_keyboard(keyboard_entries)
+
+    await update.message.reply_text(text, reply_markup=keyboard)

@@ -50,6 +50,24 @@ def confirm_stop_keyboard(session_id: str) -> InlineKeyboardMarkup:
     ])
 
 
+def admin_sessions_keyboard(
+    sessions: list[tuple[int, str]],
+) -> InlineKeyboardMarkup:
+    """Keyboard for admin /containers command with a destroy button per session.
+
+    Args:
+        sessions: List of (display_index, session_id) pairs.
+    """
+    rows = [
+        [InlineKeyboardButton(
+            f"Destroy #{index}",
+            callback_data=f"admin_destroy:{session_id}",
+        )]
+        for index, session_id in sessions
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
 def confirm_destroy_keyboard(session_id: str) -> InlineKeyboardMarkup:
     """Double-confirm keyboard for /destroy command."""
     return InlineKeyboardMarkup([
