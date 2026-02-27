@@ -1,10 +1,12 @@
 """HTTP endpoints for container lifecycle and interaction operations."""
 
+import asyncio
 import json
 import logging
 import shlex
 from pathlib import PurePosixPath
 
+import websockets
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -50,6 +52,35 @@ def _validate_workspace_path(user_path: str) -> str:
     return str(normalized)
 
 
+async def _wait_for_agent_bridge(
+    container_name: str,
+    timeout: float = 30.0,
+    interval: float = 0.5,
+) -> None:
+    """Poll the agent-bridge WebSocket until it accepts connections.
+
+    After docker.create_container() returns, the container is running but
+    the WebSocket server inside may not have bound its port yet.  This
+    readiness probe prevents the first message from hitting a
+    ConnectionRefusedError.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout
+    last_error: Exception | None = None
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            async with websockets.connect(
+                f"ws://{container_name}:9100", open_timeout=2,
+            ):
+                logger.info("Agent-bridge ready on %s", container_name)
+                return
+        except Exception as exc:
+            last_error = exc
+            await asyncio.sleep(interval)
+    raise TimeoutError(
+        f"Agent-bridge on {container_name} not ready after {timeout}s: {last_error}"
+    )
+
+
 class CreateContainerRequest(BaseModel):
     session_id: str
     container_name: str
@@ -84,6 +115,7 @@ async def create_container(
             workspace_base_path=settings.workspace_base_path,
             agent_network=settings.agent_network,
         )
+        await _wait_for_agent_bridge(payload.container_name, timeout=30.0)
     except Exception as exc:
         logger.exception(
             "Failed to create container %s for user %s",
@@ -153,8 +185,6 @@ async def send_message_to_agent(
     _: None = Depends(verify_token),
 ) -> StreamingResponse:
     """Forward a message to the agent bridge via WebSocket and stream the response."""
-    import websockets
-
     # Resolve the container name which acts as DNS hostname on agent-net.
     container_name = await docker.get_container_name(container_id)
 
@@ -163,7 +193,27 @@ async def send_message_to_agent(
         try:
             uri = f"ws://{container_name}:9100"
             logger.info("Connecting to agent-bridge at %s", uri)
-            async with websockets.connect(uri, open_timeout=10) as ws:
+
+            # Retry with exponential backoff for transient connection failures
+            # (e.g. container just unpaused, bridge still rebinding port).
+            max_retries = 3
+            retry_delay = 0.5
+            ws = None
+            for attempt in range(max_retries):
+                try:
+                    ws = await websockets.connect(uri, open_timeout=10)
+                    break
+                except (OSError, websockets.exceptions.WebSocketException) as exc:
+                    if attempt == max_retries - 1:
+                        raise
+                    logger.warning(
+                        "WebSocket attempt %d/%d for %s: %s",
+                        attempt + 1, max_retries, container_id, exc,
+                    )
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2
+
+            try:
                 request_payload = json.dumps({
                     "method": "execute_prompt",
                     "params": {
@@ -199,6 +249,8 @@ async def send_message_to_agent(
 
                     if frame.get("done", False):
                         break
+            finally:
+                await ws.close()
         except Exception as exc:
             logger.exception(
                 "WebSocket error for container %s: %s", container_id, exc,

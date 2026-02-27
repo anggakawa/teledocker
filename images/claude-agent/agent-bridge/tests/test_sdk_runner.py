@@ -26,6 +26,17 @@ class FakeInitMessage:
         self.session_id = session_id
 
 
+class FakeInitMessageNoSessionId:
+    """Mimics a SystemMessage with subtype=init but no session_id attribute.
+
+    This happens with certain SDK message types (e.g. SystemMessage) that
+    carry the init subtype but lack a session_id field.
+    """
+
+    def __init__(self):
+        self.subtype = "init"
+
+
 class FakeResultMessage:
     """Mimics the result message from the SDK."""
 
@@ -173,6 +184,34 @@ class TestClaudeSDKRunnerTextStreaming:
         assert len(result_events) >= 1
         assert result_events[-1]["session_id"] == "session-xyz"
         assert "duration_ms" in result_events[-1]
+
+    @pytest.mark.asyncio
+    async def test_init_message_without_session_id(self):
+        """An init message without session_id (SystemMessage) should not crash."""
+        runner = _get_patched_runner()
+
+        async def mock_query(prompt, options):
+            # SystemMessage has subtype="init" but no session_id attribute.
+            yield FakeInitMessageNoSessionId()
+            yield FakeStreamEvent({
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "Hello"},
+            })
+
+        patches = _make_patches(mock_query)
+        for p in patches:
+            p.start()
+        try:
+            events = await _collect_events(runner, "Hi")
+        finally:
+            for p in patches:
+                p.stop()
+
+        # Should not crash; session_id remains None.
+        assert runner._session_id is None
+        text_events = [e for e in events if e["type"] == "text_delta"]
+        assert len(text_events) == 1
+        assert text_events[0]["text"] == "Hello"
 
 
 class TestClaudeSDKRunnerToolEvents:

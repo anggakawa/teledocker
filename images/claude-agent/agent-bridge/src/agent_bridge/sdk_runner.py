@@ -113,7 +113,8 @@ class ClaudeSDKRunner:
         async for message in query(prompt=prompt, options=options):
             # Capture session ID from the init message.
             if hasattr(message, "subtype") and message.subtype == "init":
-                self._session_id = message.session_id
+                if hasattr(message, "session_id"):
+                    self._session_id = message.session_id
                 continue
 
             # Handle raw streaming events (text deltas, tool call lifecycle).
