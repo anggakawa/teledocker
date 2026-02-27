@@ -159,7 +159,7 @@ async def send_message_to_agent(
     container_name = await docker.get_container_name(container_id)
 
     async def generate():
-        chunk_count = 0
+        event_count = 0
         try:
             uri = f"ws://{container_name}:9100"
             logger.info("Connecting to agent-bridge at %s", uri)
@@ -184,10 +184,19 @@ async def send_message_to_agent(
                         )
                         yield f"data: {json.dumps({'error': frame['error']})}\n\n"
                         break
+
+                    # New structured event path (from SDK runner).
+                    event = frame.get("event")
+                    if event:
+                        event_count += 1
+                        yield f"data: {json.dumps({'event': event})}\n\n"
+
+                    # Legacy chunk path (from old CLI runner / run_shell).
                     chunk = frame.get("chunk", "")
                     if chunk:
-                        chunk_count += 1
+                        event_count += 1
                         yield f"data: {json.dumps({'chunk': chunk})}\n\n"
+
                     if frame.get("done", False):
                         break
         except Exception as exc:
@@ -197,8 +206,8 @@ async def send_message_to_agent(
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"
         finally:
             logger.info(
-                "Agent message stream ended for container %s: %d chunks",
-                container_id, chunk_count,
+                "Agent message stream ended for container %s: %d events",
+                container_id, event_count,
             )
             yield "data: [DONE]\n\n"
 

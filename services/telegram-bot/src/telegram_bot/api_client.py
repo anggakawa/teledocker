@@ -114,6 +114,16 @@ class ApiClient:
     # Session operations
     # -----------------------------------------------------------------------
 
+    async def list_sessions(self, status_filter: str | None = None) -> list[SessionDTO]:
+        """List all sessions, optionally filtered by status."""
+        params = {}
+        if status_filter:
+            params["status"] = status_filter
+        async with self._client() as client:
+            response = await client.get("/api/v1/sessions", params=params)
+            response.raise_for_status()
+            return [SessionDTO.model_validate(s) for s in response.json()]
+
     async def create_session(
         self,
         user_id: UUID,
@@ -207,7 +217,30 @@ class ApiClient:
     async def stream_message(
         self, session_id: UUID, text: str, telegram_msg_id: int | None = None
     ) -> AsyncGenerator[str, None]:
-        """Send a message to the AI agent and yield response chunks."""
+        """Send a message to the AI agent and yield response chunks (legacy).
+
+        Kept for backward compatibility. Extracts text from both structured
+        events and legacy chunk format.
+        """
+        async for event in self.stream_message_events(session_id, text, telegram_msg_id):
+            event_type = event.get("type", "")
+            if event_type == "text_delta":
+                text_chunk = event.get("text", "")
+                if text_chunk:
+                    yield text_chunk
+            elif event_type == "error":
+                yield f"Error: {event.get('text', 'Unknown error')}"
+            elif event_type == "legacy_chunk":
+                yield event.get("chunk", "")
+
+    async def stream_message_events(
+        self, session_id: UUID, text: str, telegram_msg_id: int | None = None
+    ) -> AsyncGenerator[dict, None]:
+        """Send a message to the AI agent and yield structured event dicts.
+
+        Handles both new structured events and legacy chunk format from
+        the SSE stream, normalizing everything into event dicts.
+        """
         async with httpx.AsyncClient(
             base_url=self._base_url, headers=self._headers, timeout=300.0
         ) as client:
@@ -218,20 +251,32 @@ class ApiClient:
             ) as response:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data = line[6:]
-                        if data == "[DONE]":
-                            break
-                        try:
-                            parsed = json.loads(data)
-                            chunk = parsed.get("chunk", "")
-                            if chunk:
-                                yield chunk
-                            error = parsed.get("error", "")
-                            if error:
-                                yield f"Error: {error}"
-                        except json.JSONDecodeError:
-                            yield data
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:]
+                    if data == "[DONE]":
+                        break
+                    try:
+                        parsed = json.loads(data)
+
+                        # New structured event path.
+                        event = parsed.get("event")
+                        if event:
+                            yield event
+                            continue
+
+                        # Legacy chunk path.
+                        chunk = parsed.get("chunk", "")
+                        if chunk:
+                            yield {"type": "legacy_chunk", "chunk": chunk}
+                            continue
+
+                        # Error from any layer.
+                        error = parsed.get("error", "")
+                        if error:
+                            yield {"type": "error", "text": error}
+                    except json.JSONDecodeError:
+                        yield {"type": "legacy_chunk", "chunk": data}
 
     async def upload_file(
         self, session_id: UUID, filename: str, file_bytes: bytes

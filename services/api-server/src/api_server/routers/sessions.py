@@ -293,7 +293,7 @@ async def send_message(
     full_response_parts: list[str] = []
 
     async def generate():
-        chunk_count = 0
+        event_count = 0
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
                 async with client.stream(
@@ -309,10 +309,21 @@ async def send_message(
                         if payload_data == "[DONE]":
                             break
                         yield f"data: {payload_data}\n\n"
-                        chunk_count += 1
+                        event_count += 1
+
                         # Extract readable text for database logging.
                         try:
-                            chunk = json.loads(payload_data).get("chunk", "")
+                            parsed = json.loads(payload_data)
+
+                            # New structured event path.
+                            event = parsed.get("event")
+                            if event and event.get("type") == "text_delta":
+                                text = event.get("text", "")
+                                if text:
+                                    full_response_parts.append(text)
+
+                            # Legacy chunk path (backward compat).
+                            chunk = parsed.get("chunk", "")
                             if chunk:
                                 full_response_parts.append(chunk)
                         except json.JSONDecodeError:
@@ -329,8 +340,8 @@ async def send_message(
             elapsed_ms = int((time.monotonic() - start_time) * 1000)
             full_response = "".join(full_response_parts)
             logger.info(
-                "send_message done session=%s chunks=%d response_len=%d elapsed_ms=%d",
-                session_id, chunk_count, len(full_response), elapsed_ms,
+                "send_message done session=%s events=%d response_len=%d elapsed_ms=%d",
+                session_id, event_count, len(full_response), elapsed_ms,
             )
             asyncio.create_task(
                 _log_outbound_message(session_id, full_response, elapsed_ms)

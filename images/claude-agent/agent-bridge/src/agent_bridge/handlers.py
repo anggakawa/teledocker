@@ -1,7 +1,7 @@
 """JSON-RPC method handlers for the agent bridge WebSocket server.
 
 Each handler corresponds to one JSON-RPC method name:
-- execute_prompt: Send a message to Claude Code.
+- execute_prompt: Send a message to Claude Code (structured events via SDK).
 - run_shell: Execute a raw shell command.
 - upload_file: Write bytes to /workspace.
 - download_file: Read a file from /workspace as base64.
@@ -16,6 +16,7 @@ from pathlib import Path
 import psutil
 
 from agent_bridge.claude import ClaudeCodeRunner
+from agent_bridge.sdk_runner import ClaudeSDKRunner
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +35,14 @@ def _validate_path(user_path: str) -> Path:
 
 
 async def execute_prompt(
-    params: dict, runner: ClaudeCodeRunner
-) -> AsyncGenerator[str, None]:
-    """Stream Claude Code's response to a user prompt."""
+    params: dict, sdk_runner: ClaudeSDKRunner
+) -> AsyncGenerator[dict, None]:
+    """Stream Claude Code's response as structured event dicts via SDK."""
     prompt = params.get("prompt", "")
     env_vars = params.get("env_vars", {})
 
-    async for line in runner.send_message(prompt, env_vars):
-        yield line
+    async for event_dict in sdk_runner.send_message(prompt, env_vars):
+        yield event_dict
 
 
 async def run_shell(params: dict, runner: ClaudeCodeRunner) -> AsyncGenerator[str, None]:
