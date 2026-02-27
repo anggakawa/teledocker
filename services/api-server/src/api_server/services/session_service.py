@@ -201,6 +201,12 @@ async def destroy_session(
                 )
             else:
                 raise
+        except httpx.ConnectError:
+            logger.warning(
+                "Cannot reach container-manager to delete container %s "
+                "(DNS/network failure), proceeding with DB cleanup.",
+                session.container_id,
+            )
 
     await db.delete(session)
     await db.commit()

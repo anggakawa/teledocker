@@ -200,7 +200,30 @@ class TestDestroySessionsByStatus:
 
 
 class TestDestroySessionNotFoundHandling:
-    """Verify destroy_session cleans up DB even when container is gone."""
+    """Verify destroy_session cleans up DB even when container is gone or unreachable."""
+
+    @pytest.mark.asyncio
+    async def test_deletes_session_when_container_manager_unreachable(self):
+        """If container-manager is unreachable (DNS/network), session is still deleted."""
+        from api_server.services.session_service import destroy_session
+
+        session = _make_mock_session()
+        db = _make_mock_db(session)
+
+        with patch(
+            f"{_MODULE}._call_container_manager",
+            new_callable=AsyncMock,
+            side_effect=httpx.ConnectError("[Errno -3] Temporary failure in name resolution"),
+        ):
+            await destroy_session(
+                session_id=session.id,
+                container_manager_url="http://container-manager:8001",
+                service_token="test-token",
+                db=db,
+            )
+
+        db.delete.assert_called_once_with(session)
+        db.commit.assert_called()
 
     @pytest.mark.asyncio
     async def test_deletes_session_when_container_manager_returns_404(self):
