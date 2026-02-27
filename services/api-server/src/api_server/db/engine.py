@@ -31,6 +31,7 @@ def initialize_engine(database_url: str) -> None:
         echo=False,  # Set to True for SQL query logging during development.
         pool_size=10,
         max_overflow=20,
+        pool_pre_ping=True,  # Detect and replace dead connections before checkout.
     )
     _session_factory = async_sessionmaker(
         bind=_engine,

@@ -20,7 +20,7 @@ from chatops_shared.schemas.message import ExecRequest, SendMessageRequest
 from chatops_shared.schemas.session import SessionDTO
 
 from api_server.config import settings
-from api_server.db.engine import get_db
+from api_server.db.engine import get_db, get_db_session
 from api_server.dependencies import verify_service_token
 from api_server.services import message_service, session_service
 
@@ -235,17 +235,21 @@ async def send_message(
         finally:
             yield "data: [DONE]\n\n"
 
-            # Log the full outbound response after streaming completes.
+            # Log outbound response in a fresh DB session. The request-scoped
+            # session may already be closed by the time streaming finishes,
+            # because FastAPI's dependency lifecycle ends when the handler
+            # returns StreamingResponse — the generator runs after that.
             elapsed_ms = int((time.monotonic() - start_time) * 1000)
             full_response = "".join(full_response_parts)
-            await message_service.log_message(
-                session_id=session_id,
-                direction="outbound",
-                content_type="text",
-                content=full_response,
-                db=db,
-                processing_ms=elapsed_ms,
-            )
+            async with get_db_session() as fresh_db:
+                await message_service.log_message(
+                    session_id=session_id,
+                    direction="outbound",
+                    content_type="text",
+                    content=full_response,
+                    db=fresh_db,
+                    processing_ms=elapsed_ms,
+                )
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
