@@ -187,10 +187,20 @@ async def destroy_session(
         raise ValueError(f"Session {session_id} not found")
 
     if session.container_id:
-        await _call_container_manager(
-            container_manager_url, service_token, "delete",
-            f"/containers/{session.container_id}",
-        )
+        try:
+            await _call_container_manager(
+                container_manager_url, service_token, "delete",
+                f"/containers/{session.container_id}",
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                logger.warning(
+                    "Container %s not found in container-manager, "
+                    "proceeding with DB cleanup.",
+                    session.container_id,
+                )
+            else:
+                raise
 
     await db.delete(session)
     await db.commit()

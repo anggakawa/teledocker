@@ -13,6 +13,16 @@ from aiodocker.containers import DockerContainer
 
 logger = logging.getLogger(__name__)
 
+
+def _is_not_found(exc: Exception) -> bool:
+    """Check if an aiodocker exception is a 404 Not Found.
+
+    aiodocker.DockerError stores the HTTP status in its .status attribute.
+    Using getattr avoids a hard import dependency on the exception class.
+    """
+    return getattr(exc, "status", None) == 404
+
+
 # Resource limits applied to every user container.
 _CPU_QUOTA = 100_000   # 100ms per 100ms period = 1 core
 _CPU_PERIOD = 100_000
@@ -135,7 +145,13 @@ class DockerClient:
             await container.stop(t=5)
         except Exception:
             pass  # Container may already be stopped.
-        await container.delete(v=with_volume, force=True)
+        try:
+            await container.delete(v=with_volume, force=True)
+        except Exception as exc:
+            if _is_not_found(exc):
+                logger.warning("Container %s already removed, skipping.", container_id)
+                return
+            raise
         logger.info("Removed container %s (with_volume=%s)", container_id, with_volume)
 
     async def pause_container(self, container_id: str) -> None:
