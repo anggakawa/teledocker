@@ -1,6 +1,7 @@
 """Business logic for user registration, approval, and API key management."""
 
 import logging
+import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -62,6 +63,12 @@ async def get_user(telegram_id: int, db: AsyncSession) -> UserDTO | None:
 async def get_user_model(telegram_id: int, db: AsyncSession) -> User | None:
     """Fetch the raw SQLAlchemy User model (needed for encrypted field access)."""
     result = await db.execute(select(User).where(User.telegram_id == telegram_id))
+    return result.scalar_one_or_none()
+
+
+async def get_user_model_by_id(user_id: uuid.UUID, db: AsyncSession) -> User | None:
+    """Fetch the raw SQLAlchemy User model by primary key UUID."""
+    result = await db.execute(select(User).where(User.id == user_id))
     return result.scalar_one_or_none()
 
 

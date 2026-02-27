@@ -29,6 +29,19 @@ from api_server.services.user_service import get_decrypted_api_key, get_user_mod
 
 logger = logging.getLogger(__name__)
 
+_NO_CONTAINER_ERROR = "Session has no container — it may have failed to provision."
+
+
+def _no_container_response() -> StreamingResponse:
+    """Return an SSE error stream when the session has no container_id."""
+
+    async def error_stream():
+        yield f"data: {json.dumps({'error': _NO_CONTAINER_ERROR})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(error_stream(), media_type="text/event-stream")
+
+
 router = APIRouter(
     prefix="/api/v1/sessions",
     tags=["sessions"],
@@ -223,6 +236,8 @@ async def exec_command(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
     container_id = session.container_id
+    if not container_id:
+        return _no_container_response()
 
     # Fetch env vars so exec'd commands that invoke Claude CLI have credentials.
     user = await get_user_model_by_id(session.user_id, db)
@@ -237,6 +252,7 @@ async def exec_command(
                     json={"command": payload.command, "env_vars": env_vars},
                     headers={"X-Service-Token": settings.service_token},
                 ) as response:
+                    response.raise_for_status()
                     async for line in response.aiter_lines():
                         if not line or not line.startswith("data: "):
                             continue
@@ -266,6 +282,8 @@ async def send_message(
 
     start_time = time.monotonic()
     container_id = session.container_id
+    if not container_id:
+        return _no_container_response()
 
     # Fetch the user model to build per-message env vars (API key + provider).
     user = await get_user_model_by_id(session.user_id, db)
@@ -302,6 +320,7 @@ async def send_message(
                     json={"text": payload.text, "env_vars": env_vars},
                     headers={"X-Service-Token": settings.service_token},
                 ) as response:
+                    response.raise_for_status()
                     async for line in response.aiter_lines():
                         if not line or not line.startswith("data: "):
                             continue
@@ -363,6 +382,11 @@ async def upload_file(
 
     file_content = await file.read()
     container_id = session.container_id
+    if not container_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_NO_CONTAINER_ERROR,
+        )
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
@@ -390,6 +414,11 @@ async def download_file(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
     container_id = session.container_id
+    if not container_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_NO_CONTAINER_ERROR,
+        )
 
     async def stream_file():
         async with httpx.AsyncClient(timeout=60.0) as client:

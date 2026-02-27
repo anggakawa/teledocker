@@ -4,7 +4,7 @@ import logging
 import uuid
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
@@ -36,6 +36,18 @@ async def create_session(
     2. Calls container-manager to create the container.
     3. Updates the session with the returned container_id and status=running.
     """
+    # Mark any stale "creating" sessions for this user as "error".
+    # This prevents MultipleResultsFound in get_active_session queries
+    # when a previous creation crashed before transitioning out of "creating".
+    await db.execute(
+        update(Session)
+        .where(
+            Session.user_id == user_id,
+            Session.status == "creating",
+        )
+        .values(status="error")
+    )
+
     container_name = _make_container_name(telegram_id)
 
     session = Session(
@@ -85,12 +97,20 @@ async def get_session(session_id: uuid.UUID, db: AsyncSession) -> SessionDTO | N
 
 
 async def get_active_session(user_id: uuid.UUID, db: AsyncSession) -> SessionDTO | None:
-    """Return the first running or paused session for this user."""
+    """Return the most recent running/paused/creating session for this user.
+
+    Multiple active sessions can exist if a previous creation attempt
+    crashed before transitioning to 'error'. We pick the newest one and
+    let cleanup handle the rest.
+    """
     result = await db.execute(
-        select(Session).where(
+        select(Session)
+        .where(
             Session.user_id == user_id,
             Session.status.in_(["running", "paused", "creating"]),
         )
+        .order_by(Session.created_at.desc())
+        .limit(1)
     )
     session = result.scalar_one_or_none()
     if session is None:
@@ -193,9 +213,11 @@ async def list_sessions(
 async def get_active_session_by_telegram_id(
     telegram_id: int, db: AsyncSession
 ) -> SessionDTO | None:
-    """Find the first running/paused/creating session for a Telegram user.
+    """Find the most recent running/paused/creating session for a Telegram user.
 
     Joins sessions to users via user_id to look up by telegram_id.
+    Multiple active sessions can exist after crashes or race conditions,
+    so we pick the newest one to avoid MultipleResultsFound.
     """
     result = await db.execute(
         select(Session)
@@ -204,6 +226,8 @@ async def get_active_session_by_telegram_id(
             User.telegram_id == telegram_id,
             Session.status.in_(["running", "paused", "creating"]),
         )
+        .order_by(Session.created_at.desc())
+        .limit(1)
     )
     session = result.scalar_one_or_none()
     if session is None:

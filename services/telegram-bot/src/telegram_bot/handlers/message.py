@@ -72,11 +72,16 @@ async def default_message_handler(update: Update, context: ContextTypes.DEFAULT_
 
     except Exception as exc:
         logger.exception("Failed to stream message for user %s: %s", telegram_id, exc)
+
+        # Clear cached session so user can create a new one instead of
+        # being stuck in a loop with a broken session.
+        context.bot_data.pop(f"session:{telegram_id}", None)
+
         # Try to update the renderer's message with the error, or send a new one.
         try:
             await renderer.handle_event({"type": "error", "text": str(exc)})
             await renderer.finalize()
         except Exception:
             await update.message.reply_text(
-                f"Error communicating with your container: {exc}\n\nTry /restart if this persists."
+                f"Error communicating with your container: {exc}\n\nTry /new to start fresh."
             )

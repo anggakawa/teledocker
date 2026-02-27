@@ -82,15 +82,24 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             agent_type=agent_type,
             system_prompt=system_prompt,
         )
+
+        # Don't cache a broken session — the container never started.
+        if session.status == "error":
+            await status_msg.edit_text(
+                "Container failed to start. Please try /new again.\n"
+                "If the problem persists, contact an admin."
+            )
+            return
+
         # Store session ID in bot_data so all handlers can find it.
         context.bot_data[f"session:{update.effective_user.id}"] = str(session.id)
 
-        status = escape_markdown_v2(session.status)
+        session_status = escape_markdown_v2(session.status)
         name = escape_markdown_v2(session.container_name)
         await status_msg.edit_text(
             f"Container ready\\!\n"
             f"Name: `{name}`\n"
-            f"Status: {status}\n\n"
+            f"Status: {session_status}\n\n"
             "Send any message to start chatting with Claude Code\\.",
             parse_mode="MarkdownV2",
         )
