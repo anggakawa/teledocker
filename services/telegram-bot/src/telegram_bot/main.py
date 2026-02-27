@@ -13,7 +13,7 @@ import logging
 
 import httpx
 from redis.asyncio import Redis
-from telegram import BotCommand, Update
+from telegram import BotCommand, BotCommandScopeChat, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -194,18 +194,30 @@ async def _handle_admin_notification(application: Application, event: dict) -> N
             logger.warning("Could not notify rejected user %s: %s", telegram_id, exc)
 
 
-_BOT_COMMANDS = [
+_USER_COMMANDS = [
     BotCommand("start", "Register and get started"),
     BotCommand("new", "Create a new container session"),
     BotCommand("stop", "Stop active container"),
     BotCommand("restart", "Restart active container"),
+    BotCommand("destroy", "Destroy container permanently"),
     BotCommand("status", "Show container status"),
     BotCommand("shell", "Execute a shell command"),
     BotCommand("download", "Download a file from container"),
     BotCommand("setkey", "Store your API key"),
+    BotCommand("setprovider", "Set API provider (anthropic/openrouter/custom)"),
+    BotCommand("setbaseurl", "Set custom API base URL"),
+    BotCommand("removekey", "Remove stored API key"),
     BotCommand("provider", "Show provider config"),
     BotCommand("help", "Show all commands"),
     BotCommand("myid", "Show your Telegram ID"),
+]
+
+_ADMIN_COMMANDS = [
+    BotCommand("approve", "Approve a pending user"),
+    BotCommand("reject", "Reject a pending user"),
+    BotCommand("revoke", "Revoke user access"),
+    BotCommand("users", "List users by status"),
+    BotCommand("containers", "List all active sessions"),
 ]
 
 
@@ -218,7 +230,16 @@ async def main() -> None:
     application = build_application()
 
     async with application:
-        await application.bot.set_my_commands(_BOT_COMMANDS)
+        # Register user-facing commands visible to everyone.
+        await application.bot.set_my_commands(_USER_COMMANDS)
+
+        # Register admin-only commands scoped to each admin's chat.
+        admin_and_user_commands = _USER_COMMANDS + _ADMIN_COMMANDS
+        for admin_id in settings.admin_telegram_ids:
+            await application.bot.set_my_commands(
+                admin_and_user_commands,
+                scope=BotCommandScopeChat(chat_id=admin_id),
+            )
         await application.start()
 
         # Launch Redis pub/sub listener as a background task.

@@ -38,6 +38,7 @@ Upload a file → saved to container workspace
 `/reject <id>` — Reject pending user
 `/revoke <id>` — Revoke user access
 `/users [filter]` — List users
+`/containers` — List all active sessions
 
 *General*:
 `/myid` — Show your Telegram ID
