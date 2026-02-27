@@ -49,17 +49,17 @@ class ClaudeCodeRunner:
         """
         env = {**os.environ, **env_vars}
 
-        # Use --continue to resume the previous conversation session.
-        # On the very first message there is no session to continue.
-        continue_flag = "--continue" if self._has_session else "--new"
-
         cmd = [
             _CLAUDE_BINARY,
             _SKIP_PERMISSIONS_FLAG,
-            continue_flag,
             "--print",  # Print response to stdout instead of interactive mode.
-            "--output-format", "stream-json",  # Stream JSON events line by line.
+            "--output-format", "text",  # Plain text output, one line at a time.
         ]
+
+        # Use --continue to resume the previous conversation session.
+        # On the very first message, omit it — CLI starts a new session by default.
+        if self._has_session:
+            cmd.append("--continue")
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
