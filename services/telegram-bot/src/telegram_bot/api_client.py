@@ -198,6 +198,9 @@ class ApiClient:
                             chunk = parsed.get("chunk", "")
                             if chunk:
                                 yield chunk
+                            error = parsed.get("error", "")
+                            if error:
+                                yield f"Error: {error}"
                         except json.JSONDecodeError:
                             yield data
 
@@ -224,6 +227,9 @@ class ApiClient:
                             chunk = parsed.get("chunk", "")
                             if chunk:
                                 yield chunk
+                            error = parsed.get("error", "")
+                            if error:
+                                yield f"Error: {error}"
                         except json.JSONDecodeError:
                             yield data
 

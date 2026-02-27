@@ -176,8 +176,12 @@ async def exec_command(
                     headers={"X-Service-Token": settings.service_token},
                 ) as response:
                     async for line in response.aiter_lines():
-                        if line:
-                            yield f"data: {line}\n\n"
+                        if not line or not line.startswith("data: "):
+                            continue
+                        payload_data = line[6:]
+                        if payload_data == "[DONE]":
+                            break
+                        yield f"data: {payload_data}\n\n"
         except Exception as exc:
             error_payload = json.dumps({"error": str(exc)})
             yield f"data: {error_payload}\n\n"
@@ -226,9 +230,19 @@ async def send_message(
                     headers={"X-Service-Token": settings.service_token},
                 ) as response:
                     async for line in response.aiter_lines():
-                        if line:
-                            full_response_parts.append(line)
-                            yield f"data: {line}\n\n"
+                        if not line or not line.startswith("data: "):
+                            continue
+                        payload_data = line[6:]
+                        if payload_data == "[DONE]":
+                            break
+                        yield f"data: {payload_data}\n\n"
+                        # Extract readable text for database logging.
+                        try:
+                            chunk = json.loads(payload_data).get("chunk", "")
+                            if chunk:
+                                full_response_parts.append(chunk)
+                        except json.JSONDecodeError:
+                            pass
         except Exception as exc:
             error_payload = json.dumps({"error": str(exc)})
             yield f"data: {error_payload}\n\n"
