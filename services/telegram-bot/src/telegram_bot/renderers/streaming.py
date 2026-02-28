@@ -117,6 +117,18 @@ class TelegramStreamRenderer:
         # Whether an error occurred (changes finalize behavior).
         self._has_error: bool = False
 
+        # Cancellation flag — set by /cancel command to stop event processing.
+        self._cancelled: bool = False
+
+    @property
+    def cancelled(self) -> bool:
+        """Whether cancellation has been requested."""
+        return self._cancelled
+
+    def request_cancel(self) -> None:
+        """Mark this renderer as cancelled — the event loop should stop."""
+        self._cancelled = True
+
     async def start(self) -> None:
         """Send the initial placeholder message."""
         self._message = await self._bot.send_message(
@@ -169,9 +181,17 @@ class TelegramStreamRenderer:
             # Final metadata event — nothing to display right now.
             pass
 
-    async def finalize(self) -> None:
-        """Flush remaining content and clean up tool status."""
+    async def finalize(self, cancelled: bool = False) -> None:
+        """Flush remaining content and clean up tool status.
+
+        Args:
+            cancelled: If True, append a "(Cancelled by user)" notice
+                       to the message before the final flush.
+        """
         self._tool_status = ""
+        if cancelled:
+            self._text_buffer += "\n\n(Cancelled by user)"
+            self._pending_text += "\n\n(Cancelled by user)"
         await self._force_flush()
 
         # If we never received any text, update the placeholder.

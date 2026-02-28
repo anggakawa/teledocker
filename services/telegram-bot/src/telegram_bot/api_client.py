@@ -185,6 +185,12 @@ class ApiClient:
             response = await client.post(f"/api/v1/sessions/{session_id}/new-conversation")
             response.raise_for_status()
 
+    async def cancel_session(self, session_id: UUID) -> None:
+        """Signal the agent to cancel the current execution."""
+        async with self._client() as client:
+            response = await client.post(f"/api/v1/sessions/{session_id}/cancel")
+            response.raise_for_status()
+
     async def destroy_session(self, session_id: UUID) -> None:
         async with self._client() as client:
             response = await client.delete(f"/api/v1/sessions/{session_id}")

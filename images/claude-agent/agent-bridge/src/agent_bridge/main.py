@@ -133,6 +133,11 @@ async def dispatch_request(
             result = {"success": True, "message": "New conversation started"}
             await websocket.send(json.dumps({"id": request_id, "result": result, "done": True}))
 
+        elif method == "cancel_execution":
+            sdk_runner.cancel()
+            result = {"success": True, "message": "Cancellation signal sent"}
+            await websocket.send(json.dumps({"id": request_id, "result": result, "done": True}))
+
         else:
             await websocket.send(
                 json.dumps({"id": request_id, "error": f"Unknown method: {method}", "done": True})

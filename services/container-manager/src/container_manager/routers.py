@@ -320,6 +320,53 @@ async def new_conversation(
         ) from exc
 
 
+@router.post(
+    "/containers/{container_id}/cancel",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def cancel_agent_execution(
+    container_id: str,
+    docker: DockerClient = Depends(get_docker_client),
+    _: None = Depends(verify_token),
+) -> None:
+    """Signal the agent-bridge to abort the current SDK query.
+
+    Opens a short-lived WebSocket to send the cancel_execution JSON-RPC
+    method, which sets the cooperative cancellation flag on the SDK runner.
+    """
+    container_name = await docker.get_container_name(container_id)
+    uri = f"ws://{container_name}:9100"
+
+    try:
+        async with websockets.connect(uri, open_timeout=5) as ws:
+            await ws.send(
+                json.dumps(
+                    {
+                        "method": "cancel_execution",
+                        "params": {},
+                        "id": "cancel",
+                    }
+                )
+            )
+            raw = await asyncio.wait_for(ws.recv(), timeout=5)
+            frame = json.loads(raw)
+            if frame.get("error"):
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Agent-bridge error: {frame['error']}",
+                )
+    except (OSError, websockets.exceptions.WebSocketException) as exc:
+        logger.exception(
+            "Failed to reach agent-bridge for cancel on %s: %s",
+            container_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Cannot reach agent-bridge: {exc}",
+        ) from exc
+
+
 @router.post("/containers/{container_id}/upload", status_code=status.HTTP_200_OK)
 async def upload_file(
     container_id: str,

@@ -58,6 +58,10 @@ async def default_message_handler(update: Update, context: ContextTypes.DEFAULT_
         chat_id=update.effective_chat.id,
     )
 
+    # Track the active renderer so /cancel can find and stop it.
+    renderer_key = f"renderer:{telegram_id}"
+    context.bot_data[renderer_key] = renderer
+
     try:
         await renderer.start()
 
@@ -66,9 +70,14 @@ async def default_message_handler(update: Update, context: ContextTypes.DEFAULT_
             text=update.message.text,
             telegram_msg_id=update.message.message_id,
         ):
+            if renderer.cancelled:
+                break
             await renderer.handle_event(event)
 
-        await renderer.finalize()
+        if renderer.cancelled:
+            await renderer.finalize(cancelled=True)
+        else:
+            await renderer.finalize()
 
     except Exception as exc:
         logger.exception("Failed to stream message for user %s: %s", telegram_id, exc)
@@ -85,3 +94,5 @@ async def default_message_handler(update: Update, context: ContextTypes.DEFAULT_
             await update.message.reply_text(
                 f"Error communicating with your container: {exc}\n\nTry /new to start fresh."
             )
+    finally:
+        context.bot_data.pop(renderer_key, None)

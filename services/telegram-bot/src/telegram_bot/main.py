@@ -24,6 +24,7 @@ from telegram.ext import (
 )
 
 from telegram_bot.api_client import ApiClient
+from telegram_bot.commands.cancel import cancel_command
 from telegram_bot.commands.admin import (
     approve_command,
     containers_command,
@@ -105,6 +106,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("restart", restart_command))
     application.add_handler(CommandHandler("destroy", destroy_command))
     application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("cancel", cancel_command))
     application.add_handler(CommandHandler("newchat", newchat_command))
     application.add_handler(CommandHandler("sessions", sessions_command))
     application.add_handler(CommandHandler("shell", shell_command))
@@ -196,6 +198,7 @@ _USER_COMMANDS = [
     BotCommand("restart", "Restart active container"),
     BotCommand("destroy", "Destroy container permanently"),
     BotCommand("status", "Show container status"),
+    BotCommand("cancel", "Cancel the current AI response"),
     BotCommand("newchat", "Start a fresh conversation"),
     BotCommand("sessions", "Browse all past sessions"),
     BotCommand("shell", "Execute a shell command"),

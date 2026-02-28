@@ -75,6 +75,8 @@ class ClaudeSDKRunner:
         self._session_id: str | None = self._load_session_id()
         # Serialize access — SDK can't handle concurrent query() on the same session.
         self._lock = asyncio.Lock()
+        # Cooperative cancellation flag — checked between SDK events in _run_query().
+        self._cancel_event = asyncio.Event()
 
     @staticmethod
     def _ensure_claude_state_dir() -> None:
@@ -120,6 +122,10 @@ class ClaudeSDKRunner:
         except OSError as exc:
             logger.warning("Failed to delete session file: %s", exc)
 
+    def cancel(self) -> None:
+        """Signal the running query to stop at the next checkpoint."""
+        self._cancel_event.set()
+
     def get_session_info(self) -> dict:
         """Return current session state for introspection."""
         return {
@@ -148,6 +154,8 @@ class ClaudeSDKRunner:
             env_vars: Environment variables to inject (API keys, provider config).
                       Passed directly to the SDK via the env option.
         """
+        self._cancel_event.clear()
+
         async with self._lock:
             start_time = time.monotonic()
 
@@ -214,6 +222,12 @@ class ClaudeSDKRunner:
         current_tool_input_json = ""
 
         async for message in query(prompt=prompt, options=options):
+            # Cooperative cancellation — check between events so we stop promptly.
+            if self._cancel_event.is_set():
+                logger.info("Query cancelled by user")
+                yield {"type": "error", "text": "Cancelled by user."}
+                return
+
             # Skip system/init messages (no session_id on these in SDK v0.1.44+).
             if hasattr(message, "subtype") and message.subtype == "init":
                 continue

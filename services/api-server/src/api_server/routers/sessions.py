@@ -292,6 +292,36 @@ async def new_conversation(
         response.raise_for_status()
 
 
+@router.post("/{session_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_execution(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Cancel an in-progress agent execution.
+
+    Proxies the cancel signal to the container-manager, which forwards it
+    to the agent-bridge WebSocket. The SDK runner's cooperative cancellation
+    flag is set, causing it to stop at the next event checkpoint.
+    """
+    session = await session_service.get_session(session_id, db)
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    container_id = session.container_id
+    if not container_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_NO_CONTAINER_ERROR,
+        )
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            f"{settings.container_manager_url}/containers/{container_id}/cancel",
+            headers={"X-Service-Token": settings.service_token},
+        )
+        response.raise_for_status()
+
+
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def destroy_session(
     session_id: uuid.UUID,
