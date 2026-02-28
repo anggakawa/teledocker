@@ -170,6 +170,35 @@ class TestDestroySessionsByStatus:
         db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_value_error_counted_as_destroyed_not_failed(self):
+        """Sessions already gone (ValueError) should count as destroyed, not failed."""
+        from api_server.services.session_service import destroy_sessions_by_status
+
+        sessions = [_make_mock_session() for _ in range(3)]
+        db = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.scalars.return_value.all.return_value = sessions
+        db.execute.return_value = result_mock
+
+        # First succeeds, second and third are already gone.
+        side_effects = [None, ValueError("Session ... not found"), ValueError("gone")]
+        with patch(
+            f"{_MODULE}.destroy_session",
+            new_callable=AsyncMock,
+            side_effect=side_effects,
+        ):
+            result = await destroy_sessions_by_status(
+                status_filter="error",
+                container_manager_url="http://container-manager:8001",
+                service_token="test-token",
+                db=db,
+            )
+
+        assert result == {"destroyed": 3, "failed": 0}
+        # No rollback needed for ValueError — no dirty DB state.
+        db.rollback.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_passes_correct_args_to_destroy_session(self):
         """Each destroy_session call must receive the right session_id and config."""
         from api_server.services.session_service import destroy_sessions_by_status

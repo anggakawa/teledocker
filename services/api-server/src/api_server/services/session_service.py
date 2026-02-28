@@ -247,6 +247,15 @@ async def destroy_sessions_by_status(
                 db=db,
             )
             destroyed += 1
+        except ValueError:
+            # Session already gone (concurrent delete, cascade, or stale
+            # identity map after a prior commit). The goal was to remove
+            # it, and it is removed — count as success.
+            logger.info(
+                "Session %s already removed during bulk cleanup, skipping.",
+                session_id,
+            )
+            destroyed += 1
         except Exception:
             logger.exception(
                 "Failed to destroy session %s during bulk cleanup", session_id
