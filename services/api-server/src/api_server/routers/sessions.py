@@ -17,15 +17,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chatops_shared.schemas.message import ExecRequest, SendMessageRequest
-from chatops_shared.schemas.session import SessionDTO
-
 from api_server.config import ApiServerSettings, settings
 from api_server.db.engine import get_db, get_db_session
 from api_server.db.models import User
 from api_server.dependencies import verify_service_token
 from api_server.services import message_service, session_service
 from api_server.services.user_service import get_decrypted_api_key, get_user_model_by_id
+from chatops_shared.schemas.message import ExecRequest, SendMessageRequest
+from chatops_shared.schemas.session import SessionDTO
 
 logger = logging.getLogger(__name__)
 
@@ -83,16 +82,22 @@ def _build_env_vars(user: User, app_settings: ApiServerSettings) -> dict[str, st
     provider = provider_config.get("provider", "anthropic")
     base_url = provider_config.get("base_url")
 
-    if provider == "anthropic":
-        return {"ANTHROPIC_API_KEY": api_key}
+    model = provider_config.get("model")
 
-    # OpenRouter or custom provider — use base URL + auth token.
-    env: dict[str, str] = {
-        "ANTHROPIC_AUTH_TOKEN": api_key,
-        "ANTHROPIC_API_KEY": "",  # Must be explicitly empty
-    }
-    if base_url:
-        env["ANTHROPIC_BASE_URL"] = base_url
+    if provider == "anthropic":
+        env = {"ANTHROPIC_API_KEY": api_key}
+    else:
+        # OpenRouter or custom provider — use base URL + auth token.
+        env = {
+            "ANTHROPIC_AUTH_TOKEN": api_key,
+            "ANTHROPIC_API_KEY": "",  # Must be explicitly empty
+        }
+        if base_url:
+            env["ANTHROPIC_BASE_URL"] = base_url
+
+    if model:
+        env["ANTHROPIC_MODEL"] = model
+
     return env
 
 
@@ -269,21 +274,20 @@ async def exec_command(
 
     async def generate():
         try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                async with client.stream(
-                    "POST",
-                    f"{settings.container_manager_url}/containers/{container_id}/exec",
-                    json={"command": payload.command, "env_vars": env_vars},
-                    headers={"X-Service-Token": settings.service_token},
-                ) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if not line or not line.startswith("data: "):
-                            continue
-                        payload_data = line[6:]
-                        if payload_data == "[DONE]":
-                            break
-                        yield f"data: {payload_data}\n\n"
+            async with httpx.AsyncClient(timeout=300.0) as client, client.stream(
+                "POST",
+                f"{settings.container_manager_url}/containers/{container_id}/exec",
+                json={"command": payload.command, "env_vars": env_vars},
+                headers={"X-Service-Token": settings.service_token},
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    payload_data = line[6:]
+                    if payload_data == "[DONE]":
+                        break
+                    yield f"data: {payload_data}\n\n"
         except Exception as exc:
             error_payload = json.dumps({"error": str(exc)})
             yield f"data: {error_payload}\n\n"
@@ -337,40 +341,39 @@ async def send_message(
     async def generate():
         event_count = 0
         try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                async with client.stream(
-                    "POST",
-                    f"{settings.container_manager_url}/containers/{container_id}/message",
-                    json={"text": payload.text, "env_vars": env_vars},
-                    headers={"X-Service-Token": settings.service_token},
-                ) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if not line or not line.startswith("data: "):
-                            continue
-                        payload_data = line[6:]
-                        if payload_data == "[DONE]":
-                            break
-                        yield f"data: {payload_data}\n\n"
-                        event_count += 1
+            async with httpx.AsyncClient(timeout=300.0) as client, client.stream(
+                "POST",
+                f"{settings.container_manager_url}/containers/{container_id}/message",
+                json={"text": payload.text, "env_vars": env_vars},
+                headers={"X-Service-Token": settings.service_token},
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data: "):
+                        continue
+                    payload_data = line[6:]
+                    if payload_data == "[DONE]":
+                        break
+                    yield f"data: {payload_data}\n\n"
+                    event_count += 1
 
-                        # Extract readable text for database logging.
-                        try:
-                            parsed = json.loads(payload_data)
+                    # Extract readable text for database logging.
+                    try:
+                        parsed = json.loads(payload_data)
 
-                            # New structured event path.
-                            event = parsed.get("event")
-                            if event and event.get("type") == "text_delta":
-                                text = event.get("text", "")
-                                if text:
-                                    full_response_parts.append(text)
+                        # New structured event path.
+                        event = parsed.get("event")
+                        if event and event.get("type") == "text_delta":
+                            text = event.get("text", "")
+                            if text:
+                                full_response_parts.append(text)
 
-                            # Legacy chunk path (backward compat).
-                            chunk = parsed.get("chunk", "")
-                            if chunk:
-                                full_response_parts.append(chunk)
-                        except json.JSONDecodeError:
-                            pass
+                        # Legacy chunk path (backward compat).
+                        chunk = parsed.get("chunk", "")
+                        if chunk:
+                            full_response_parts.append(chunk)
+                    except json.JSONDecodeError:
+                        pass
         except Exception as exc:
             error_payload = json.dumps({"error": str(exc)})
             yield f"data: {error_payload}\n\n"
@@ -445,15 +448,14 @@ async def download_file(
         )
 
     async def stream_file():
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            async with client.stream(
-                "GET",
-                f"{settings.container_manager_url}/containers/{container_id}/download/{file_path}",
-                headers={"X-Service-Token": settings.service_token},
-            ) as response:
-                response.raise_for_status()
-                async for chunk in response.aiter_bytes():
-                    yield chunk
+        async with httpx.AsyncClient(timeout=60.0) as client, client.stream(
+            "GET",
+            f"{settings.container_manager_url}/containers/{container_id}/download/{file_path}",
+            headers={"X-Service-Token": settings.service_token},
+        ) as response:
+            response.raise_for_status()
+            async for chunk in response.aiter_bytes():
+                yield chunk
 
     return StreamingResponse(
         stream_file(),

@@ -33,6 +33,7 @@ from telegram_bot.commands.admin import (
     revoke_command,
     setbaseurl_command,
     setkey_command,
+    setmodel_command,
     setprovider_command,
     users_command,
 )
@@ -114,6 +115,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("setkey", setkey_command))
     application.add_handler(CommandHandler("setprovider", setprovider_command))
     application.add_handler(CommandHandler("setbaseurl", setbaseurl_command))
+    application.add_handler(CommandHandler("setmodel", setmodel_command))
     application.add_handler(CommandHandler("removekey", removekey_command))
     application.add_handler(CommandHandler("provider", provider_command))
     application.add_handler(CommandHandler("approve", approve_command))
@@ -206,6 +208,7 @@ _USER_COMMANDS = [
     BotCommand("setkey", "Store your API key"),
     BotCommand("setprovider", "Set API provider (anthropic/openrouter/custom)"),
     BotCommand("setbaseurl", "Set custom API base URL"),
+    BotCommand("setmodel", "Set default Claude model"),
     BotCommand("removekey", "Remove stored API key"),
     BotCommand("provider", "Show provider config"),
     BotCommand("help", "Show all commands"),

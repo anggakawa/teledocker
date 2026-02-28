@@ -1,6 +1,5 @@
 """Handlers for /start, /myid, and /help commands."""
 
-import json
 import logging
 
 from telegram import Update
@@ -30,6 +29,7 @@ Upload a file → saved to container workspace
 `/setkey <api\\_key>` — Store API key \\(message auto\\-deleted\\)
 `/setprovider <preset>` — Set provider: `anthropic`, `openrouter`, `custom`
 `/setbaseurl <url>` — Set custom API base URL
+`/setmodel <model>` — Set Claude model \\(opus, sonnet, haiku, or ID\\)
 `/removekey` — Remove stored credentials
 `/provider` — Show current provider config
 

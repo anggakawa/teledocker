@@ -7,7 +7,6 @@ streaming scenarios: text output, tool use, errors, and session resumption.
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from agent_bridge.sdk_runner import _summarize_tool_input
 
 
@@ -402,3 +401,93 @@ class TestClaudeSDKRunnerResultEvent:
         assert last_event["type"] == "result"
         assert "duration_ms" in last_event
         assert last_event["duration_ms"] >= 0
+
+
+class TestClaudeSDKRunnerModelSelection:
+    """Tests for ANTHROPIC_MODEL env var extraction and SDK model option."""
+
+    @pytest.mark.asyncio
+    async def test_model_passed_to_options(self):
+        """ANTHROPIC_MODEL from env_vars should be passed as model= to ClaudeAgentOptions."""
+        runner = _get_patched_runner()
+
+        async def mock_query(prompt, options):
+            yield FakeInitMessage("s1")
+
+        mock_options_cls = MagicMock()
+
+        patches = [
+            patch("agent_bridge.sdk_runner.query", side_effect=mock_query),
+            patch("agent_bridge.sdk_runner.StreamEvent", FakeStreamEvent),
+            patch("agent_bridge.sdk_runner.ClaudeAgentOptions", mock_options_cls),
+        ]
+        for p in patches:
+            p.start()
+        try:
+            env_vars = {"ANTHROPIC_API_KEY": "sk-test", "ANTHROPIC_MODEL": "opus"}
+            await _collect_events(runner, "Hi", env_vars)
+        finally:
+            for p in patches:
+                p.stop()
+
+        # ClaudeAgentOptions should have been called with model="opus".
+        mock_options_cls.assert_called_once()
+        call_kwargs = mock_options_cls.call_args
+        assert call_kwargs.kwargs["model"] == "opus"
+
+    @pytest.mark.asyncio
+    async def test_model_none_when_not_in_env(self):
+        """When ANTHROPIC_MODEL is absent, model=None should be passed to options."""
+        runner = _get_patched_runner()
+
+        async def mock_query(prompt, options):
+            yield FakeInitMessage("s1")
+
+        mock_options_cls = MagicMock()
+
+        patches = [
+            patch("agent_bridge.sdk_runner.query", side_effect=mock_query),
+            patch("agent_bridge.sdk_runner.StreamEvent", FakeStreamEvent),
+            patch("agent_bridge.sdk_runner.ClaudeAgentOptions", mock_options_cls),
+        ]
+        for p in patches:
+            p.start()
+        try:
+            env_vars = {"ANTHROPIC_API_KEY": "sk-test"}
+            await _collect_events(runner, "Hi", env_vars)
+        finally:
+            for p in patches:
+                p.stop()
+
+        mock_options_cls.assert_called_once()
+        call_kwargs = mock_options_cls.call_args
+        assert call_kwargs.kwargs["model"] is None
+
+    @pytest.mark.asyncio
+    async def test_model_removed_from_env_vars(self):
+        """ANTHROPIC_MODEL should be popped from env_vars before passing to SDK."""
+        runner = _get_patched_runner()
+
+        async def mock_query(prompt, options):
+            yield FakeInitMessage("s1")
+
+        mock_options_cls = MagicMock()
+
+        patches = [
+            patch("agent_bridge.sdk_runner.query", side_effect=mock_query),
+            patch("agent_bridge.sdk_runner.StreamEvent", FakeStreamEvent),
+            patch("agent_bridge.sdk_runner.ClaudeAgentOptions", mock_options_cls),
+        ]
+        for p in patches:
+            p.start()
+        try:
+            env_vars = {"ANTHROPIC_API_KEY": "sk-test", "ANTHROPIC_MODEL": "haiku"}
+            await _collect_events(runner, "Hi", env_vars)
+        finally:
+            for p in patches:
+                p.stop()
+
+        # env dict passed to options should NOT contain ANTHROPIC_MODEL.
+        call_kwargs = mock_options_cls.call_args
+        assert "ANTHROPIC_MODEL" not in call_kwargs.kwargs["env"]
+        assert call_kwargs.kwargs["env"]["ANTHROPIC_API_KEY"] == "sk-test"

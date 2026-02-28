@@ -6,11 +6,10 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chatops_shared.encryption import decrypt_api_key, encrypt_api_key
-from chatops_shared.schemas.user import UserDTO
-
 from api_server.config import ApiServerSettings
 from api_server.db.models import User
+from chatops_shared.encryption import decrypt_api_key, encrypt_api_key
+from chatops_shared.schemas.user import UserDTO
 
 logger = logging.getLogger(__name__)
 
@@ -141,10 +140,13 @@ async def set_api_key(
     if user is None:
         raise ValueError(f"User {telegram_id} not found")
 
+    # Preserve the existing model preference when re-keying.
+    existing_model = (user.provider_config or {}).get("model")
+
     ciphertext, iv = encrypt_api_key(api_key_plaintext, settings.encryption_key)
     user.api_key_encrypted = ciphertext
     user.api_key_iv = iv
-    user.provider_config = {"provider": provider, "base_url": base_url}
+    user.provider_config = {"provider": provider, "base_url": base_url, "model": existing_model}
     await db.commit()
     logger.info("Stored encrypted API key for telegram_id=%s provider=%s", telegram_id, provider)
 
@@ -167,13 +169,14 @@ async def update_provider_config(
     provider: str,
     base_url: str | None,
     db: AsyncSession,
+    model: str | None = None,
 ) -> None:
     """Update only the provider_config JSONB. Never touches the encrypted API key."""
     user = await get_user_model(telegram_id, db)
     if user is None:
         raise ValueError(f"User {telegram_id} not found")
 
-    user.provider_config = {"provider": provider, "base_url": base_url}
+    user.provider_config = {"provider": provider, "base_url": base_url, "model": model}
     await db.commit()
     logger.info("Updated provider config for telegram_id=%s provider=%s", telegram_id, provider)
 

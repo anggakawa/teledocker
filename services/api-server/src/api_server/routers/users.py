@@ -12,17 +12,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api_server.config import settings
+from api_server.db.engine import get_db
+from api_server.dependencies import get_redis, verify_service_token
+from api_server.services import user_service
 from chatops_shared.schemas.user import (
     RegisterRequest,
     SetApiKeyRequest,
     UpdateProviderRequest,
     UserDTO,
 )
-
-from api_server.config import settings
-from api_server.db.engine import get_db
-from api_server.dependencies import get_redis, verify_service_token
-from api_server.services import user_service
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +138,7 @@ async def update_provider(
             provider=payload.provider,
             base_url=payload.base_url,
             db=db,
+            model=payload.model,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))

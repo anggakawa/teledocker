@@ -63,3 +63,4 @@ class UpdateProviderRequest(BaseModel):
 
     provider: str
     base_url: str | None = None
+    model: str | None = None

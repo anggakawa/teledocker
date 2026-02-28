@@ -11,13 +11,13 @@ the full router module), these tests mirror the function logic — the same
 pattern used by test_sse_proxy.py. Any change to _build_env_vars in
 production must also be reflected here.
 
-Three provider scenarios are tested:
+Four provider scenarios are tested:
   1. Anthropic (default) — sets ANTHROPIC_API_KEY
   2. OpenRouter / custom — sets ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL
   3. No API key stored — returns empty dict
+  4. Model selection — sets ANTHROPIC_MODEL when model is configured
 """
 
-import pytest
 
 
 # ---------------------------------------------------------------------------
@@ -41,16 +41,22 @@ def _build_env_vars(
     provider = provider_config.get("provider", "anthropic")
     base_url = provider_config.get("base_url")
 
-    if provider == "anthropic":
-        return {"ANTHROPIC_API_KEY": api_key}
+    model = provider_config.get("model")
 
-    # OpenRouter or custom provider — use base URL + auth token.
-    env: dict[str, str] = {
-        "ANTHROPIC_AUTH_TOKEN": api_key,
-        "ANTHROPIC_API_KEY": "",  # Must be explicitly empty
-    }
-    if base_url:
-        env["ANTHROPIC_BASE_URL"] = base_url
+    if provider == "anthropic":
+        env = {"ANTHROPIC_API_KEY": api_key}
+    else:
+        # OpenRouter or custom provider — use base URL + auth token.
+        env = {
+            "ANTHROPIC_AUTH_TOKEN": api_key,
+            "ANTHROPIC_API_KEY": "",  # Must be explicitly empty
+        }
+        if base_url:
+            env["ANTHROPIC_BASE_URL"] = base_url
+
+    if model:
+        env["ANTHROPIC_MODEL"] = model
+
     return env
 
 
@@ -168,3 +174,64 @@ class TestBuildEnvVarsNoKey:
         )
 
         assert result == {"ANTHROPIC_API_KEY": "sk-ant-key"}
+
+
+# ---------------------------------------------------------------------------
+# Tests: Model selection via ANTHROPIC_MODEL
+# ---------------------------------------------------------------------------
+
+
+class TestBuildEnvVarsModel:
+    """When model is set in provider_config, ANTHROPIC_MODEL should be injected."""
+
+    def test_model_set_for_anthropic_provider(self):
+        """Anthropic user with a model gets both API_KEY and MODEL."""
+        result = _build_env_vars(
+            api_key="sk-ant-key",
+            provider_config={"provider": "anthropic", "model": "opus"},
+        )
+
+        assert result["ANTHROPIC_API_KEY"] == "sk-ant-key"
+        assert result["ANTHROPIC_MODEL"] == "opus"
+
+    def test_model_set_for_openrouter_provider(self):
+        """OpenRouter user with a model gets AUTH_TOKEN, BASE_URL, and MODEL."""
+        result = _build_env_vars(
+            api_key="sk-or-key",
+            provider_config={
+                "provider": "openrouter",
+                "base_url": "https://openrouter.ai/api",
+                "model": "sonnet",
+            },
+        )
+
+        assert result["ANTHROPIC_AUTH_TOKEN"] == "sk-or-key"
+        assert result["ANTHROPIC_BASE_URL"] == "https://openrouter.ai/api"
+        assert result["ANTHROPIC_MODEL"] == "sonnet"
+
+    def test_model_none_omits_env_var(self):
+        """When model is None, ANTHROPIC_MODEL should not be in the env dict."""
+        result = _build_env_vars(
+            api_key="sk-ant-key",
+            provider_config={"provider": "anthropic", "model": None},
+        )
+
+        assert "ANTHROPIC_MODEL" not in result
+
+    def test_model_empty_string_omits_env_var(self):
+        """When model is an empty string, ANTHROPIC_MODEL should not be set."""
+        result = _build_env_vars(
+            api_key="sk-ant-key",
+            provider_config={"provider": "anthropic", "model": ""},
+        )
+
+        assert "ANTHROPIC_MODEL" not in result
+
+    def test_full_model_id_passed_through(self):
+        """Full model IDs like 'claude-opus-4-6' should be passed verbatim."""
+        result = _build_env_vars(
+            api_key="sk-ant-key",
+            provider_config={"provider": "anthropic", "model": "claude-opus-4-6"},
+        )
+
+        assert result["ANTHROPIC_MODEL"] == "claude-opus-4-6"

@@ -21,6 +21,8 @@ _PROVIDER_PRESETS = {
     "custom": {"provider": "custom", "base_url": None},  # User must also call /setbaseurl
 }
 
+_MODEL_PRESETS = {"opus": "opus", "sonnet": "sonnet", "haiku": "haiku"}
+
 
 def _require_admin(func):
     """Decorator that rejects non-admin users with a permission error."""
@@ -108,11 +110,14 @@ async def setprovider_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     preset = _PROVIDER_PRESETS[preset_name]
+    existing_model = (user_dto.provider_config or {}).get("model")
+
     try:
         await api_client.update_provider(
             telegram_id=update.effective_user.id,
             provider=preset["provider"],
             base_url=preset["base_url"],
+            model=existing_model,
         )
         await update.message.reply_text(
             f"Provider set to: {preset_name}\n"
@@ -137,16 +142,54 @@ async def setbaseurl_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     base_url = context.args[0]
     current_config = user_dto.provider_config or {}
     provider = current_config.get("provider", "custom")
+    existing_model = current_config.get("model")
 
     try:
         await api_client.update_provider(
             telegram_id=update.effective_user.id,
             provider=provider,
             base_url=base_url,
+            model=existing_model,
         )
         await update.message.reply_text(f"Base URL set to: {base_url}")
     except Exception as exc:
         await update.message.reply_text(f"Failed to set base URL: {exc}")
+
+
+async def setmodel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Set the default Claude model (opus, sonnet, haiku, or a custom model ID)."""
+    api_client = context.bot_data["api_client"]
+    user_dto = await api_client.get_user(update.effective_user.id)
+    if user_dto is None or not user_dto.is_approved:
+        await update.message.reply_text("Account pending approval.")
+        return
+
+    if not context.args:
+        presets = ", ".join(_MODEL_PRESETS.keys())
+        await update.message.reply_text(
+            f"Usage: /setmodel <model>\n"
+            f"Presets: {presets}\n"
+            f"Or use a full model ID (e.g. claude-sonnet-4-5-20250514)"
+        )
+        return
+
+    raw_model = context.args[0].lower()
+    model = _MODEL_PRESETS.get(raw_model, context.args[0])
+
+    current_config = user_dto.provider_config or {}
+    provider = current_config.get("provider", "anthropic")
+    base_url = current_config.get("base_url")
+
+    try:
+        await api_client.update_provider(
+            telegram_id=update.effective_user.id,
+            provider=provider,
+            base_url=base_url,
+            model=model,
+        )
+        await update.message.reply_text(f"Model set to: {model}")
+    except Exception as exc:
+        await update.message.reply_text(f"Failed to set model: {exc}")
 
 
 async def removekey_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -174,11 +217,13 @@ async def provider_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     config = user_dto.provider_config
     provider = config.get("provider", "unknown")
     base_url = config.get("base_url") or "(default)"
+    model = config.get("model") or "(default)"
     has_key = user_dto.provider_config is not None  # Approximate check.
 
     await update.message.reply_text(
         f"Provider: {provider}\n"
         f"Base URL: {base_url}\n"
+        f"Model: {model}\n"
         f"API Key: {'set' if has_key else 'not set'}"
     )
 

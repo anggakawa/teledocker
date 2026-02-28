@@ -95,11 +95,16 @@ class ClaudeSDKRunner:
         self, prompt: str, env_vars: dict[str, str]
     ) -> AsyncGenerator[dict, None]:
         """Execute the SDK query and transform raw API events into our event format."""
+        # Extract model selection before passing env vars to the SDK.
+        # ANTHROPIC_MODEL is our internal transport — the SDK uses the model option directly.
+        model = env_vars.pop("ANTHROPIC_MODEL", None)
+
         options = ClaudeAgentOptions(
             include_partial_messages=True,
             permission_mode="bypassPermissions",
             max_turns=100,
             env=env_vars,
+            model=model,
         )
 
         # Resume conversation if we have a session from a previous turn.

@@ -95,13 +95,17 @@ class ApiClient:
             response.raise_for_status()
 
     async def update_provider(
-        self, telegram_id: int, provider: str, base_url: str | None
+        self,
+        telegram_id: int,
+        provider: str,
+        base_url: str | None,
+        model: str | None = None,
     ) -> None:
         """Update provider config without touching the encrypted API key."""
         async with self._client() as client:
             response = await client.put(
                 f"/api/v1/users/{telegram_id}/provider",
-                json={"provider": provider, "base_url": base_url},
+                json={"provider": provider, "base_url": base_url, "model": model},
             )
             response.raise_for_status()
 
@@ -200,28 +204,27 @@ class ApiClient:
         """Execute a command and yield output chunks as they arrive."""
         async with httpx.AsyncClient(
             base_url=self._base_url, headers=self._headers, timeout=300.0
-        ) as client:
-            async with client.stream(
-                "POST",
-                f"/api/v1/sessions/{session_id}/exec",
-                json={"command": command},
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data = line[6:]
-                        if data == "[DONE]":
-                            break
-                        try:
-                            parsed = json.loads(data)
-                            chunk = parsed.get("chunk", "")
-                            if chunk:
-                                yield chunk
-                            error = parsed.get("error", "")
-                            if error:
-                                yield f"Error: {error}"
-                        except json.JSONDecodeError:
-                            yield data
+        ) as client, client.stream(
+            "POST",
+            f"/api/v1/sessions/{session_id}/exec",
+            json={"command": command},
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if line.startswith("data: "):
+                    data = line[6:]
+                    if data == "[DONE]":
+                        break
+                    try:
+                        parsed = json.loads(data)
+                        chunk = parsed.get("chunk", "")
+                        if chunk:
+                            yield chunk
+                        error = parsed.get("error", "")
+                        if error:
+                            yield f"Error: {error}"
+                    except json.JSONDecodeError:
+                        yield data
 
     async def stream_message(
         self, session_id: UUID, text: str, telegram_msg_id: int | None = None
@@ -252,40 +255,39 @@ class ApiClient:
         """
         async with httpx.AsyncClient(
             base_url=self._base_url, headers=self._headers, timeout=300.0
-        ) as client:
-            async with client.stream(
-                "POST",
-                f"/api/v1/sessions/{session_id}/message",
-                json={"text": text, "telegram_msg_id": telegram_msg_id},
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data: "):
+        ) as client, client.stream(
+            "POST",
+            f"/api/v1/sessions/{session_id}/message",
+            json={"text": text, "telegram_msg_id": telegram_msg_id},
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data == "[DONE]":
+                    break
+                try:
+                    parsed = json.loads(data)
+
+                    # New structured event path.
+                    event = parsed.get("event")
+                    if event:
+                        yield event
                         continue
-                    data = line[6:]
-                    if data == "[DONE]":
-                        break
-                    try:
-                        parsed = json.loads(data)
 
-                        # New structured event path.
-                        event = parsed.get("event")
-                        if event:
-                            yield event
-                            continue
+                    # Legacy chunk path.
+                    chunk = parsed.get("chunk", "")
+                    if chunk:
+                        yield {"type": "legacy_chunk", "chunk": chunk}
+                        continue
 
-                        # Legacy chunk path.
-                        chunk = parsed.get("chunk", "")
-                        if chunk:
-                            yield {"type": "legacy_chunk", "chunk": chunk}
-                            continue
-
-                        # Error from any layer.
-                        error = parsed.get("error", "")
-                        if error:
-                            yield {"type": "error", "text": error}
-                    except json.JSONDecodeError:
-                        yield {"type": "legacy_chunk", "chunk": data}
+                    # Error from any layer.
+                    error = parsed.get("error", "")
+                    if error:
+                        yield {"type": "error", "text": error}
+                except json.JSONDecodeError:
+                    yield {"type": "legacy_chunk", "chunk": data}
 
     async def upload_file(
         self, session_id: UUID, filename: str, file_bytes: bytes
