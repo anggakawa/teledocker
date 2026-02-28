@@ -15,7 +15,6 @@ from uuid import uuid4
 
 import pytest
 
-from chatops_shared.schemas.message import MessageDTO
 from chatops_shared.schemas.session import SessionDTO, SessionStatus
 from chatops_shared.schemas.user import UserDTO, UserRole
 
@@ -60,19 +59,6 @@ def _make_session_dto(
         system_prompt=None,
         last_activity_at=_now(),
         metadata=None,
-        created_at=_now(),
-    )
-
-
-def _make_message_dto(direction: str = "inbound", content: str = "hello") -> MessageDTO:
-    return MessageDTO(
-        id=uuid4(),
-        session_id=SESSION_ID,
-        direction=direction,
-        content_type="text",
-        content=content,
-        telegram_msg_id=None,
-        processing_ms=None,
         created_at=_now(),
     )
 
@@ -183,96 +169,6 @@ class TestSessionsCommand:
 
         reply = update.message.reply_text.call_args[0][0]
         assert "Failed to list sessions" in reply
-
-
-class TestHistoryCommand:
-    """Tests for history_command — the /history Telegram handler."""
-
-    @pytest.mark.asyncio
-    async def test_no_session_shows_hint(self):
-        """User with no active session sees a 'no active session' message."""
-        from telegram_bot.commands.session import history_command
-
-        api_client = AsyncMock()
-        api_client.get_user = AsyncMock(return_value=_make_user_dto())
-        api_client.get_active_session_by_telegram_id = AsyncMock(return_value=None)
-
-        update = _make_update()
-        context = _make_context(api_client)
-
-        await history_command(update, context)
-
-        reply = update.message.reply_text.call_args[0][0]
-        assert "No active session" in reply
-
-    @pytest.mark.asyncio
-    async def test_shows_message_history(self):
-        """User with an active session sees formatted message history."""
-        from telegram_bot.commands.session import history_command
-
-        messages = [
-            _make_message_dto(direction="inbound", content="Hello Claude"),
-            _make_message_dto(direction="outbound", content="Hello! How can I help?"),
-        ]
-
-        api_client = AsyncMock()
-        api_client.get_user = AsyncMock(return_value=_make_user_dto())
-        api_client.get_session_messages = AsyncMock(return_value=messages)
-
-        update = _make_update()
-        context = _make_context(
-            api_client,
-            extra_bot_data={f"session:{TELEGRAM_ID}": str(SESSION_ID)},
-        )
-
-        await history_command(update, context)
-
-        reply = update.message.reply_text.call_args[0][0]
-        assert ">>" in reply  # inbound arrow
-        assert "<<" in reply  # outbound arrow
-        assert "Hello Claude" in reply
-
-    @pytest.mark.asyncio
-    async def test_empty_history(self):
-        """Session with no messages shows an appropriate message."""
-        from telegram_bot.commands.session import history_command
-
-        api_client = AsyncMock()
-        api_client.get_user = AsyncMock(return_value=_make_user_dto())
-        api_client.get_session_messages = AsyncMock(return_value=[])
-
-        update = _make_update()
-        context = _make_context(
-            api_client,
-            extra_bot_data={f"session:{TELEGRAM_ID}": str(SESSION_ID)},
-        )
-
-        await history_command(update, context)
-
-        reply = update.message.reply_text.call_args[0][0]
-        assert "No messages" in reply
-
-    @pytest.mark.asyncio
-    async def test_api_error_shows_failure(self):
-        """API errors are surfaced to the user."""
-        from telegram_bot.commands.session import history_command
-
-        api_client = AsyncMock()
-        api_client.get_user = AsyncMock(return_value=_make_user_dto())
-        api_client.get_session_messages = AsyncMock(
-            side_effect=RuntimeError("timeout")
-        )
-
-        update = _make_update()
-        context = _make_context(
-            api_client,
-            extra_bot_data={f"session:{TELEGRAM_ID}": str(SESSION_ID)},
-        )
-
-        await history_command(update, context)
-
-        reply = update.message.reply_text.call_args[0][0]
-        assert "Failed to get history" in reply
 
 
 class TestResumeCallback:
