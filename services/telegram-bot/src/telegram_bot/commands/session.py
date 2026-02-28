@@ -22,8 +22,7 @@ async def _require_approved(update: Update, api_client: ApiClient) -> bool:
     user = await api_client.get_user(update.effective_user.id)
     if user is None or not user.is_approved:
         await update.message.reply_text(
-            "Your account is pending admin approval. "
-            "You'll be notified once approved."
+            "Your account is pending admin approval. You'll be notified once approved."
         )
         return False
     return True
@@ -105,9 +104,7 @@ async def new_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
     except Exception as exc:
         logger.exception("Failed to create session: %s", exc)
-        await status_msg.edit_text(
-            f"Failed to create container: {exc}\n\nPlease try again."
-        )
+        await status_msg.edit_text(f"Failed to create container: {exc}\n\nPlease try again.")
 
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -154,6 +151,30 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     except Exception as exc:
         logger.exception("Failed to restart session: %s", exc)
         await status_msg.edit_text(f"Failed to restart: {exc}")
+
+
+async def newchat_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Start a fresh Claude conversation without restarting the container."""
+    api_client: ApiClient = context.bot_data["api_client"]
+
+    if not await _require_approved(update, api_client):
+        return
+
+    session_id = await _get_session_id(update.effective_user.id, context)
+    if session_id is None:
+        await update.message.reply_text(
+            "No active session. Use /new to create one.",
+            reply_markup=no_session_keyboard(),
+        )
+        return
+
+    status_msg = await update.message.reply_text("Starting new conversation...")
+    try:
+        await api_client.new_conversation(UUID(session_id))
+        await status_msg.edit_text("New conversation started. Previous context has been cleared.")
+    except Exception as exc:
+        logger.exception("Failed to start new conversation: %s", exc)
+        await status_msg.edit_text(f"Failed to start new conversation: {exc}")
 
 
 async def destroy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

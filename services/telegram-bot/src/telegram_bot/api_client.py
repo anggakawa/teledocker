@@ -148,9 +148,7 @@ class ApiClient:
             response.raise_for_status()
             return SessionDTO.model_validate(response.json())
 
-    async def get_active_session_by_telegram_id(
-        self, telegram_id: int
-    ) -> SessionDTO | None:
+    async def get_active_session_by_telegram_id(self, telegram_id: int) -> SessionDTO | None:
         """Find active session for a Telegram user (survives bot restarts)."""
         async with self._client() as client:
             response = await client.get(
@@ -180,6 +178,12 @@ class ApiClient:
             response = await client.post(f"/api/v1/sessions/{session_id}/restart")
             response.raise_for_status()
 
+    async def new_conversation(self, session_id: UUID) -> None:
+        """Reset the Claude conversation without restarting the container."""
+        async with self._client() as client:
+            response = await client.post(f"/api/v1/sessions/{session_id}/new-conversation")
+            response.raise_for_status()
+
     async def destroy_session(self, session_id: UUID) -> None:
         async with self._client() as client:
             response = await client.delete(f"/api/v1/sessions/{session_id}")
@@ -188,9 +192,7 @@ class ApiClient:
     async def destroy_sessions_by_status(self, status: str) -> dict:
         """Bulk destroy all sessions with the given status."""
         async with self._client() as client:
-            response = await client.delete(
-                "/api/v1/sessions", params={"status": status}
-            )
+            response = await client.delete("/api/v1/sessions", params={"status": status})
             response.raise_for_status()
             return response.json()
 
@@ -198,17 +200,18 @@ class ApiClient:
     # Streaming operations
     # -----------------------------------------------------------------------
 
-    async def stream_exec(
-        self, session_id: UUID, command: str
-    ) -> AsyncGenerator[str, None]:
+    async def stream_exec(self, session_id: UUID, command: str) -> AsyncGenerator[str, None]:
         """Execute a command and yield output chunks as they arrive."""
-        async with httpx.AsyncClient(
-            base_url=self._base_url, headers=self._headers, timeout=300.0
-        ) as client, client.stream(
-            "POST",
-            f"/api/v1/sessions/{session_id}/exec",
-            json={"command": command},
-        ) as response:
+        async with (
+            httpx.AsyncClient(
+                base_url=self._base_url, headers=self._headers, timeout=300.0
+            ) as client,
+            client.stream(
+                "POST",
+                f"/api/v1/sessions/{session_id}/exec",
+                json={"command": command},
+            ) as response,
+        ):
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if line.startswith("data: "):
@@ -253,13 +256,16 @@ class ApiClient:
         Handles both new structured events and legacy chunk format from
         the SSE stream, normalizing everything into event dicts.
         """
-        async with httpx.AsyncClient(
-            base_url=self._base_url, headers=self._headers, timeout=300.0
-        ) as client, client.stream(
-            "POST",
-            f"/api/v1/sessions/{session_id}/message",
-            json={"text": text, "telegram_msg_id": telegram_msg_id},
-        ) as response:
+        async with (
+            httpx.AsyncClient(
+                base_url=self._base_url, headers=self._headers, timeout=300.0
+            ) as client,
+            client.stream(
+                "POST",
+                f"/api/v1/sessions/{session_id}/message",
+                json={"text": text, "telegram_msg_id": telegram_msg_id},
+            ) as response,
+        ):
             response.raise_for_status()
             async for line in response.aiter_lines():
                 if not line.startswith("data: "):
@@ -289,9 +295,7 @@ class ApiClient:
                 except json.JSONDecodeError:
                     yield {"type": "legacy_chunk", "chunk": data}
 
-    async def upload_file(
-        self, session_id: UUID, filename: str, file_bytes: bytes
-    ) -> dict:
+    async def upload_file(self, session_id: UUID, filename: str, file_bytes: bytes) -> dict:
         async with self._client(timeout=60.0) as client:
             response = await client.post(
                 f"/api/v1/sessions/{session_id}/upload",
@@ -303,8 +307,6 @@ class ApiClient:
 
     async def download_file(self, session_id: UUID, file_path: str) -> bytes:
         async with self._client(timeout=60.0) as client:
-            response = await client.get(
-                f"/api/v1/sessions/{session_id}/download/{file_path}"
-            )
+            response = await client.get(f"/api/v1/sessions/{session_id}/download/{file_path}")
             response.raise_for_status()
             return response.content

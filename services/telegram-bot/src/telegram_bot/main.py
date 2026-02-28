@@ -41,6 +41,7 @@ from telegram_bot.commands.files import download_command, upload_file_handler
 from telegram_bot.commands.session import (
     destroy_command,
     new_command,
+    newchat_command,
     restart_command,
     status_command,
     stop_command,
@@ -74,10 +75,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     if isinstance(context.error, (httpx.ConnectError, httpx.TimeoutException)):
-        text = (
-            "The API server is currently unreachable. "
-            "Please try again in a moment."
-        )
+        text = "The API server is currently unreachable. Please try again in a moment."
     else:
         text = "Something went wrong. Please try again later."
 
@@ -91,11 +89,7 @@ def build_application() -> Application:
         service_token=settings.service_token,
     )
 
-    application = (
-        Application.builder()
-        .token(settings.bot_token)
-        .build()
-    )
+    application = Application.builder().token(settings.bot_token).build()
 
     # Make shared dependencies available to all handlers.
     application.bot_data["api_client"] = api_client
@@ -110,6 +104,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("restart", restart_command))
     application.add_handler(CommandHandler("destroy", destroy_command))
     application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("newchat", newchat_command))
     application.add_handler(CommandHandler("shell", shell_command))
     application.add_handler(CommandHandler("download", download_command))
     application.add_handler(CommandHandler("setkey", setkey_command))
@@ -125,9 +120,7 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("containers", containers_command))
 
     # File upload handler — triggered when user sends a document.
-    application.add_handler(
-        MessageHandler(filters.Document.ALL, upload_file_handler)
-    )
+    application.add_handler(MessageHandler(filters.Document.ALL, upload_file_handler))
 
     # Inline keyboard callback handler.
     application.add_handler(CallbackQueryHandler(callback_query_handler))
@@ -142,9 +135,7 @@ def build_application() -> Application:
     return application
 
 
-async def listen_for_admin_notifications(
-    application: Application, redis_url: str
-) -> None:
+async def listen_for_admin_notifications(application: Application, redis_url: str) -> None:
     """Subscribe to the admin:notifications Redis channel and forward to Telegram.
 
     This runs as a background task alongside the bot webhook server.
@@ -203,6 +194,7 @@ _USER_COMMANDS = [
     BotCommand("restart", "Restart active container"),
     BotCommand("destroy", "Destroy container permanently"),
     BotCommand("status", "Show container status"),
+    BotCommand("newchat", "Start a fresh conversation"),
     BotCommand("shell", "Execute a shell command"),
     BotCommand("download", "Download a file from container"),
     BotCommand("setkey", "Store your API key"),

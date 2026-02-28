@@ -30,9 +30,7 @@ def get_docker_client(request: Request) -> DockerClient:
 
 def verify_token(x_service_token: str = Header(..., alias="X-Service-Token")) -> None:
     if x_service_token != settings.service_token:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Invalid service token"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid service token")
 
 
 def _validate_workspace_path(user_path: str) -> str:
@@ -69,16 +67,15 @@ async def _wait_for_agent_bridge(
     while asyncio.get_event_loop().time() < deadline:
         try:
             async with websockets.connect(
-                f"ws://{container_name}:9100", open_timeout=2,
+                f"ws://{container_name}:9100",
+                open_timeout=2,
             ):
                 logger.info("Agent-bridge ready on %s", container_name)
                 return
         except Exception as exc:
             last_error = exc
             await asyncio.sleep(interval)
-    raise TimeoutError(
-        f"Agent-bridge on {container_name} not ready after {timeout}s: {last_error}"
-    )
+    raise TimeoutError(f"Agent-bridge on {container_name} not ready after {timeout}s: {last_error}")
 
 
 class CreateContainerRequest(BaseModel):
@@ -208,20 +205,25 @@ async def send_message_to_agent(
                         raise
                     logger.warning(
                         "WebSocket attempt %d/%d for %s: %s",
-                        attempt + 1, max_retries, container_id, exc,
+                        attempt + 1,
+                        max_retries,
+                        container_id,
+                        exc,
                     )
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2
 
             try:
-                request_payload = json.dumps({
-                    "method": "execute_prompt",
-                    "params": {
-                        "prompt": payload.text,
-                        "env_vars": payload.env_vars,
-                    },
-                    "id": "1",
-                })
+                request_payload = json.dumps(
+                    {
+                        "method": "execute_prompt",
+                        "params": {
+                            "prompt": payload.text,
+                            "env_vars": payload.env_vars,
+                        },
+                        "id": "1",
+                    }
+                )
                 await ws.send(request_payload)
 
                 # Read streaming JSON-RPC frames until we get done=true.
@@ -230,7 +232,8 @@ async def send_message_to_agent(
                     if frame.get("error"):
                         logger.warning(
                             "Agent-bridge error for container %s: %s",
-                            container_id, frame["error"],
+                            container_id,
+                            frame["error"],
                         )
                         yield f"data: {json.dumps({'error': frame['error']})}\n\n"
                         break
@@ -253,17 +256,68 @@ async def send_message_to_agent(
                 await ws.close()
         except Exception as exc:
             logger.exception(
-                "WebSocket error for container %s: %s", container_id, exc,
+                "WebSocket error for container %s: %s",
+                container_id,
+                exc,
             )
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"
         finally:
             logger.info(
                 "Agent message stream ended for container %s: %d events",
-                container_id, event_count,
+                container_id,
+                event_count,
             )
             yield "data: [DONE]\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@router.post(
+    "/containers/{container_id}/new-conversation",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def new_conversation(
+    container_id: str,
+    docker: DockerClient = Depends(get_docker_client),
+    _: None = Depends(verify_token),
+) -> None:
+    """Reset the Claude conversation inside a running container.
+
+    Connects to the agent-bridge WebSocket and sends the new_conversation
+    JSON-RPC method, which clears the SDK session state without restarting
+    the container or destroying the workspace.
+    """
+    container_name = await docker.get_container_name(container_id)
+    uri = f"ws://{container_name}:9100"
+
+    try:
+        async with websockets.connect(uri, open_timeout=10) as ws:
+            await ws.send(
+                json.dumps(
+                    {
+                        "method": "new_conversation",
+                        "params": {},
+                        "id": "new-conv",
+                    }
+                )
+            )
+            raw = await asyncio.wait_for(ws.recv(), timeout=10)
+            frame = json.loads(raw)
+            if frame.get("error"):
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Agent-bridge error: {frame['error']}",
+                )
+    except (OSError, websockets.exceptions.WebSocketException) as exc:
+        logger.exception(
+            "Failed to reach agent-bridge for new_conversation on %s: %s",
+            container_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Cannot reach agent-bridge: {exc}",
+        ) from exc
 
 
 @router.post("/containers/{container_id}/upload", status_code=status.HTTP_200_OK)
@@ -280,6 +334,7 @@ async def upload_file(
 
     # Use docker exec to write the file using base64 to handle binary content.
     import base64
+
     encoded = base64.b64encode(file_content).decode("ascii")
     quoted_path = shlex.quote(safe_path)
     command = f"echo '{encoded}' | base64 -d > {quoted_path}"
@@ -304,11 +359,10 @@ async def download_file(
     async def stream():
         # Read file as base64 chunks via exec, then decode on the fly.
         import base64
+
         quoted_path = shlex.quote(safe_path)
         chunks = []
-        async for line in docker.exec_command(
-            container_id, f"base64 {quoted_path}"
-        ):
+        async for line in docker.exec_command(container_id, f"base64 {quoted_path}"):
             chunks.append(line)
         raw = base64.b64decode("".join(chunks))
         yield raw

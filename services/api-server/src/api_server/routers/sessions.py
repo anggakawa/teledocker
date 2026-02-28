@@ -124,9 +124,7 @@ async def _log_outbound_message(
                 processing_ms=elapsed_ms,
             )
     except Exception:
-        logger.exception(
-            "Failed to log outbound message for session %s", session_id
-        )
+        logger.exception("Failed to log outbound message for session %s", session_id)
 
 
 @router.get("", response_model=list[SessionDTO])
@@ -225,6 +223,31 @@ async def restart_session(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
 
+@router.post("/{session_id}/new-conversation", status_code=status.HTTP_204_NO_CONTENT)
+async def new_conversation(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Reset the Claude conversation without restarting the container."""
+    session = await session_service.get_session(session_id, db)
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    container_id = session.container_id
+    if not container_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_NO_CONTAINER_ERROR,
+        )
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(
+            f"{settings.container_manager_url}/containers/{container_id}/new-conversation",
+            headers={"X-Service-Token": settings.service_token},
+        )
+        response.raise_for_status()
+
+
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def destroy_session(
     session_id: uuid.UUID,
@@ -246,9 +269,7 @@ async def update_session_status(
 ) -> SessionDTO:
     """Update just the status field of a session (used by cleanup/health)."""
     try:
-        return await session_service.update_session_status(
-            session_id, payload.status, db
-        )
+        return await session_service.update_session_status(session_id, payload.status, db)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
@@ -274,12 +295,15 @@ async def exec_command(
 
     async def generate():
         try:
-            async with httpx.AsyncClient(timeout=300.0) as client, client.stream(
-                "POST",
-                f"{settings.container_manager_url}/containers/{container_id}/exec",
-                json={"command": payload.command, "env_vars": env_vars},
-                headers={"X-Service-Token": settings.service_token},
-            ) as response:
+            async with (
+                httpx.AsyncClient(timeout=300.0) as client,
+                client.stream(
+                    "POST",
+                    f"{settings.container_manager_url}/containers/{container_id}/exec",
+                    json={"command": payload.command, "env_vars": env_vars},
+                    headers={"X-Service-Token": settings.service_token},
+                ) as response,
+            ):
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if not line or not line.startswith("data: "):
@@ -320,7 +344,9 @@ async def send_message(
     has_env_vars = bool(env_vars)
     logger.info(
         "send_message session=%s container=%s has_env_vars=%s",
-        session_id, container_id, has_env_vars,
+        session_id,
+        container_id,
+        has_env_vars,
     )
 
     # Bump last_activity_at so idle cleanup knows this session is alive.
@@ -341,12 +367,15 @@ async def send_message(
     async def generate():
         event_count = 0
         try:
-            async with httpx.AsyncClient(timeout=300.0) as client, client.stream(
-                "POST",
-                f"{settings.container_manager_url}/containers/{container_id}/message",
-                json={"text": payload.text, "env_vars": env_vars},
-                headers={"X-Service-Token": settings.service_token},
-            ) as response:
+            async with (
+                httpx.AsyncClient(timeout=300.0) as client,
+                client.stream(
+                    "POST",
+                    f"{settings.container_manager_url}/containers/{container_id}/message",
+                    json={"text": payload.text, "env_vars": env_vars},
+                    headers={"X-Service-Token": settings.service_token},
+                ) as response,
+            ):
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if not line or not line.startswith("data: "):
@@ -387,11 +416,12 @@ async def send_message(
             full_response = "".join(full_response_parts)
             logger.info(
                 "send_message done session=%s events=%d response_len=%d elapsed_ms=%d",
-                session_id, event_count, len(full_response), elapsed_ms,
+                session_id,
+                event_count,
+                len(full_response),
+                elapsed_ms,
             )
-            asyncio.create_task(
-                _log_outbound_message(session_id, full_response, elapsed_ms)
-            )
+            asyncio.create_task(_log_outbound_message(session_id, full_response, elapsed_ms))
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -448,11 +478,14 @@ async def download_file(
         )
 
     async def stream_file():
-        async with httpx.AsyncClient(timeout=60.0) as client, client.stream(
-            "GET",
-            f"{settings.container_manager_url}/containers/{container_id}/download/{file_path}",
-            headers={"X-Service-Token": settings.service_token},
-        ) as response:
+        async with (
+            httpx.AsyncClient(timeout=60.0) as client,
+            client.stream(
+                "GET",
+                f"{settings.container_manager_url}/containers/{container_id}/download/{file_path}",
+                headers={"X-Service-Token": settings.service_token},
+            ) as response,
+        ):
             response.raise_for_status()
             async for chunk in response.aiter_bytes():
                 yield chunk
