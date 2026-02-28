@@ -40,9 +40,11 @@ from telegram_bot.commands.admin import (
 from telegram_bot.commands.files import download_command, upload_file_handler
 from telegram_bot.commands.session import (
     destroy_command,
+    history_command,
     new_command,
     newchat_command,
     restart_command,
+    sessions_command,
     status_command,
     stop_command,
 )
@@ -105,6 +107,8 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("destroy", destroy_command))
     application.add_handler(CommandHandler("status", status_command))
     application.add_handler(CommandHandler("newchat", newchat_command))
+    application.add_handler(CommandHandler("sessions", sessions_command))
+    application.add_handler(CommandHandler("history", history_command))
     application.add_handler(CommandHandler("shell", shell_command))
     application.add_handler(CommandHandler("download", download_command))
     application.add_handler(CommandHandler("setkey", setkey_command))
@@ -195,6 +199,8 @@ _USER_COMMANDS = [
     BotCommand("destroy", "Destroy container permanently"),
     BotCommand("status", "Show container status"),
     BotCommand("newchat", "Start a fresh conversation"),
+    BotCommand("sessions", "Browse all past sessions"),
+    BotCommand("history", "View message history"),
     BotCommand("shell", "Execute a shell command"),
     BotCommand("download", "Download a file from container"),
     BotCommand("setkey", "Store your API key"),

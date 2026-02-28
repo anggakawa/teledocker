@@ -18,6 +18,9 @@ _HELP_TEXT = """
 `/restart` — Restart active container
 `/destroy` — Destroy container and workspace permanently
 `/status` — Show container status and resource usage
+`/newchat` — Start a fresh conversation \\(keep container\\)
+`/sessions` — Browse all past sessions
+`/history` — View message history for current session
 
 *Interaction* _\\(approved users\\)_:
 Send any message → forwarded to Claude Code

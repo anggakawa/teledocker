@@ -23,7 +23,7 @@ from api_server.db.models import User
 from api_server.dependencies import verify_service_token
 from api_server.services import message_service, session_service
 from api_server.services.user_service import get_decrypted_api_key, get_user_model_by_id
-from chatops_shared.schemas.message import ExecRequest, SendMessageRequest
+from chatops_shared.schemas.message import ExecRequest, MessageDTO, SendMessageRequest
 from chatops_shared.schemas.session import SessionDTO
 
 logger = logging.getLogger(__name__)
@@ -170,6 +170,16 @@ async def get_active_session_by_telegram_id(
     return session
 
 
+@router.get("/by-user", response_model=list[SessionDTO])
+async def list_sessions_by_user(
+    telegram_id: int = Query(...),
+    limit: int = Query(default=10, ge=1, le=50),
+    db: AsyncSession = Depends(get_db),
+) -> list[SessionDTO]:
+    """List all sessions for a Telegram user, including stopped ones."""
+    return await session_service.list_sessions_by_telegram_id(telegram_id, db, limit)
+
+
 @router.post("", response_model=SessionDTO, status_code=status.HTTP_201_CREATED)
 async def create_session(
     payload: NewSessionRequest,
@@ -221,6 +231,40 @@ async def restart_session(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.post("/{session_id}/resume", response_model=SessionDTO)
+async def resume_session(
+    session_id: uuid.UUID,
+    telegram_id: int = Query(...),
+    db: AsyncSession = Depends(get_db),
+) -> SessionDTO:
+    """Resume a stopped/paused session, stopping any currently active one first."""
+    try:
+        return await session_service.resume_session(
+            target_session_id=session_id,
+            telegram_id=telegram_id,
+            container_manager_url=settings.container_manager_url,
+            service_token=settings.service_token,
+            db=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.get("/{session_id}/messages", response_model=list[MessageDTO])
+async def get_session_messages(
+    session_id: uuid.UUID,
+    limit: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+) -> list[MessageDTO]:
+    """Return the most recent messages for a session, ordered oldest first."""
+    session = await session_service.get_session(session_id, db)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Session not found"
+        )
+    return await message_service.get_message_history(session_id, limit, db)
 
 
 @router.post("/{session_id}/new-conversation", status_code=status.HTTP_204_NO_CONTENT)

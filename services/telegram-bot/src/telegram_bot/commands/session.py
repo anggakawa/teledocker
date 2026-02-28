@@ -7,11 +7,18 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from telegram_bot.api_client import ApiClient
-from telegram_bot.formatters import escape_markdown_v2, format_status
+from telegram_bot.formatters import (
+    escape_markdown_v2,
+    format_message_history,
+    format_session_button_label,
+    format_session_list_for_user,
+    format_status,
+)
 from telegram_bot.keyboards import (
     confirm_destroy_keyboard,
     confirm_stop_keyboard,
     no_session_keyboard,
+    session_list_keyboard,
 )
 
 logger = logging.getLogger(__name__)
@@ -227,3 +234,60 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     except Exception as exc:
         logger.exception("Failed to get status: %s", exc)
         await update.message.reply_text(f"Failed to get status: {exc}")
+
+
+async def sessions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List all sessions for the user with inline keyboard for selection."""
+    api_client: ApiClient = context.bot_data["api_client"]
+
+    if not await _require_approved(update, api_client):
+        return
+
+    try:
+        sessions = await api_client.list_user_sessions(update.effective_user.id)
+        text = format_session_list_for_user(sessions)
+
+        if not sessions:
+            await update.message.reply_text(text)
+            return
+
+        button_data = [
+            (index, str(session.id), format_session_button_label(session, index))
+            for index, session in enumerate(sessions, start=1)
+        ]
+        await update.message.reply_text(
+            text, reply_markup=session_list_keyboard(button_data)
+        )
+    except Exception as exc:
+        logger.exception("Failed to list sessions: %s", exc)
+        await update.message.reply_text(f"Failed to list sessions: {exc}")
+
+
+async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show message history for the current active session."""
+    api_client: ApiClient = context.bot_data["api_client"]
+
+    if not await _require_approved(update, api_client):
+        return
+
+    session_id = await _get_session_id(update.effective_user.id, context)
+    if session_id is None:
+        await update.message.reply_text(
+            "No active session. Use /new to create one.",
+            reply_markup=no_session_keyboard(),
+        )
+        return
+
+    try:
+        messages = await api_client.get_session_messages(UUID(session_id), limit=20)
+        text = format_message_history(messages)
+
+        # Truncate to stay under Telegram's 4096-char limit.
+        max_length = 4000
+        if len(text) > max_length:
+            text = text[:max_length] + "\n\n... (truncated)"
+
+        await update.message.reply_text(text)
+    except Exception as exc:
+        logger.exception("Failed to get message history: %s", exc)
+        await update.message.reply_text(f"Failed to get history: {exc}")

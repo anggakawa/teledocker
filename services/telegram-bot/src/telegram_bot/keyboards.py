@@ -85,6 +85,44 @@ def admin_sessions_keyboard(
     return InlineKeyboardMarkup(rows)
 
 
+def session_list_keyboard(
+    sessions: list[tuple[int, str, str]],
+) -> InlineKeyboardMarkup:
+    """Keyboard for /sessions — one button per session.
+
+    Args:
+        sessions: List of (display_index, session_id, button_label) tuples.
+    """
+    rows = [
+        [InlineKeyboardButton(label, callback_data=f"sess_detail:{session_id}")]
+        for _, session_id, label in sessions
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
+def session_detail_keyboard(session_id: str, status: str) -> InlineKeyboardMarkup:
+    """Action keyboard for a selected session from the /sessions list.
+
+    Shows "Resume" for stopped/paused sessions, "View History" for all,
+    and a "Back to List" button.
+    """
+    rows = []
+
+    if status in ("stopped", "paused", "error"):
+        rows.append([InlineKeyboardButton(
+            "Resume", callback_data=f"resume:{session_id}",
+        )])
+
+    rows.append([InlineKeyboardButton(
+        "View History", callback_data=f"sess_hist:{session_id}",
+    )])
+    rows.append([InlineKeyboardButton(
+        "Back to List", callback_data="action:sessions_list",
+    )])
+
+    return InlineKeyboardMarkup(rows)
+
+
 def confirm_destroy_keyboard(session_id: str) -> InlineKeyboardMarkup:
     """Double-confirm keyboard for /destroy command."""
     return InlineKeyboardMarkup([

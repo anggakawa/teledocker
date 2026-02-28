@@ -11,6 +11,7 @@ from uuid import UUID
 
 import httpx
 
+from chatops_shared.schemas.message import MessageDTO
 from chatops_shared.schemas.session import SessionDTO
 from chatops_shared.schemas.user import UserDTO
 
@@ -195,6 +196,42 @@ class ApiClient:
             response = await client.delete("/api/v1/sessions", params={"status": status})
             response.raise_for_status()
             return response.json()
+
+    async def list_user_sessions(
+        self, telegram_id: int, limit: int = 10
+    ) -> list[SessionDTO]:
+        """List all sessions for a Telegram user, including stopped ones."""
+        async with self._client() as client:
+            response = await client.get(
+                "/api/v1/sessions/by-user",
+                params={"telegram_id": telegram_id, "limit": limit},
+            )
+            response.raise_for_status()
+            return [SessionDTO.model_validate(s) for s in response.json()]
+
+    async def resume_session(
+        self, session_id: UUID, telegram_id: int
+    ) -> SessionDTO:
+        """Resume a stopped/paused session, auto-stopping any active one."""
+        async with self._client(timeout=60.0) as client:
+            response = await client.post(
+                f"/api/v1/sessions/{session_id}/resume",
+                params={"telegram_id": telegram_id},
+            )
+            response.raise_for_status()
+            return SessionDTO.model_validate(response.json())
+
+    async def get_session_messages(
+        self, session_id: UUID, limit: int = 20
+    ) -> list[MessageDTO]:
+        """Fetch recent message history for a session."""
+        async with self._client() as client:
+            response = await client.get(
+                f"/api/v1/sessions/{session_id}/messages",
+                params={"limit": limit},
+            )
+            response.raise_for_status()
+            return [MessageDTO.model_validate(m) for m in response.json()]
 
     # -----------------------------------------------------------------------
     # Streaming operations

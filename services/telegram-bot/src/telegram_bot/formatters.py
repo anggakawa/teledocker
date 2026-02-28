@@ -7,6 +7,7 @@ text, but NOT inside code blocks. We handle both cases carefully here.
 import re
 from datetime import UTC, datetime
 
+from chatops_shared.schemas.message import MessageDTO
 from chatops_shared.schemas.session import SessionDTO
 from chatops_shared.schemas.user import UserDTO
 
@@ -63,19 +64,11 @@ def format_session_list_for_admin(
     Each entry shows: index, user info, status emoji, container name,
     created age, and last activity age.
     """
-    status_emoji = {
-        "running": "🟢",
-        "paused": "🟡",
-        "stopped": "🔴",
-        "creating": "⏳",
-        "error": "❌",
-    }
-
     lines = [f"Containers ({len(sessions_with_users)}):"]
     lines.append("")
 
     for index, (session, user) in enumerate(sessions_with_users, start=1):
-        emoji = status_emoji.get(session.status, "❓")
+        emoji = _STATUS_EMOJI.get(session.status, "❓")
 
         if user:
             username_part = f"@{user.telegram_username}" if user.telegram_username else ""
@@ -96,15 +89,69 @@ def format_session_list_for_admin(
     return "\n".join(lines)
 
 
+_STATUS_EMOJI = {
+    "running": "🟢",
+    "paused": "🟡",
+    "stopped": "🔴",
+    "creating": "⏳",
+    "error": "❌",
+}
+
+
+def format_session_list_for_user(sessions: list[SessionDTO]) -> str:
+    """Format a user's session list for the /sessions command.
+
+    Uses plain text (no MarkdownV2) because inline keyboard messages
+    are simpler to handle without escaping.
+    """
+    if not sessions:
+        return "No sessions found. Use /new to create one."
+
+    lines = [f"Your Sessions ({len(sessions)}):"]
+    lines.append("")
+
+    for index, session in enumerate(sessions, start=1):
+        emoji = _STATUS_EMOJI.get(session.status, "?")
+        age = format_age(session.created_at)
+        lines.append(f"#{index} {emoji} {session.status.value} - {session.container_name}")
+        lines.append(f"     Created: {age}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def format_session_button_label(session: SessionDTO, index: int) -> str:
+    """Build a short label for a session's inline keyboard button."""
+    emoji = _STATUS_EMOJI.get(session.status, "?")
+    return f"#{index} {emoji} {session.container_name}"
+
+
+def format_message_history(messages: list[MessageDTO]) -> str:
+    """Format message history for display in Telegram.
+
+    Uses direction arrows and truncates long messages to stay within
+    Telegram's 4096-char limit.
+    """
+    if not messages:
+        return "No messages in this session yet."
+
+    max_content_length = 200
+    lines = []
+
+    for message in messages:
+        arrow = ">>" if message.direction == "inbound" else "<<"
+        content = message.content
+        if len(content) > max_content_length:
+            content = content[:max_content_length] + "..."
+        timestamp = message.created_at.strftime("%H:%M")
+        lines.append(f"{arrow} [{timestamp}] {content}")
+
+    return "\n".join(lines)
+
+
 def format_status(session: SessionDTO, stats: dict) -> str:
     """Format a container status summary for display in Telegram."""
-    status_emoji = {
-        "running": "🟢",
-        "paused": "🟡",
-        "stopped": "🔴",
-        "creating": "⏳",
-        "error": "❌",
-    }.get(session.status, "❓")
+    status_emoji = _STATUS_EMOJI.get(session.status, "❓")
 
     lines = [
         f"{status_emoji} *Container Status*",

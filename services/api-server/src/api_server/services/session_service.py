@@ -329,3 +329,60 @@ async def touch_session_activity(
 
     session.last_activity_at = func.now()
     await db.commit()
+
+
+async def list_sessions_by_telegram_id(
+    telegram_id: int, db: AsyncSession, limit: int = 10
+) -> list[SessionDTO]:
+    """List all sessions for a Telegram user, including stopped ones.
+
+    Returns sessions ordered newest first. This lets users browse their
+    full session history and resume stopped sessions.
+    """
+    result = await db.execute(
+        select(Session)
+        .join(User, Session.user_id == User.id)
+        .where(User.telegram_id == telegram_id)
+        .order_by(Session.created_at.desc())
+        .limit(limit)
+    )
+    sessions = result.scalars().all()
+    return [SessionDTO.model_validate(s) for s in sessions]
+
+
+async def resume_session(
+    target_session_id: uuid.UUID,
+    telegram_id: int,
+    container_manager_url: str,
+    service_token: str,
+    db: AsyncSession,
+) -> SessionDTO:
+    """Resume a stopped/paused session, stopping any currently active one first.
+
+    Enforces the single-active-session invariant: only one container can
+    be running per user at a time, since message routing uses a single
+    cached session ID.
+    """
+    # Stop any currently active session so we don't have two running containers.
+    current_active = await get_active_session_by_telegram_id(telegram_id, db)
+    if current_active is not None and current_active.id != target_session_id:
+        await stop_session(
+            current_active.id, container_manager_url, service_token, db
+        )
+
+    # Restart the target session's container.
+    result = await db.execute(
+        select(Session).where(Session.id == target_session_id)
+    )
+    target = result.scalar_one_or_none()
+    if target is None:
+        raise ValueError(f"Session {target_session_id} not found")
+
+    await _call_container_manager(
+        container_manager_url, service_token, "post",
+        f"/containers/{target.container_id}/restart",
+    )
+    target.status = "running"
+    await db.commit()
+    await db.refresh(target)
+    return SessionDTO.model_validate(target)

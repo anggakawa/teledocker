@@ -18,6 +18,12 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from telegram_bot.commands.session import _get_session_id
+from telegram_bot.formatters import (
+    format_message_history,
+    format_session_button_label,
+    format_session_list_for_user,
+)
+from telegram_bot.keyboards import session_detail_keyboard, session_list_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +50,12 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         await _handle_destroy_recreate(query, context, payload)
     elif action == "restart":
         await _handle_restart(query, context, payload)
+    elif action == "sess_detail":
+        await _handle_session_detail(query, context, payload)
+    elif action == "resume":
+        await _handle_resume(query, context, payload)
+    elif action == "sess_hist":
+        await _handle_session_history(query, context, payload)
     elif action == "admin_destroy":
         await _handle_admin_destroy_session(query, context, payload)
     elif action == "admin_destroy_status":
@@ -163,8 +175,101 @@ async def _handle_restart(query, context, session_id_hint: str) -> None:
         await query.edit_message_text(f"Restart failed: {exc}")
 
 
+async def _handle_session_detail(query, context, session_id: str) -> None:
+    """Show details and action buttons for a selected session."""
+    api_client = context.bot_data["api_client"]
+
+    try:
+        session = await api_client.get_session(UUID(session_id))
+        if session is None:
+            await query.edit_message_text("Session no longer exists.")
+            return
+
+        status_text = session.status.value
+        lines = [
+            f"Session: {session.container_name}",
+            f"Status: {status_text}",
+            f"Agent: {session.agent_type}",
+        ]
+        await query.edit_message_text(
+            "\n".join(lines),
+            reply_markup=session_detail_keyboard(session_id, status_text),
+        )
+    except Exception as exc:
+        logger.exception("Failed to load session detail: %s", exc)
+        await query.edit_message_text(f"Failed to load session: {exc}")
+
+
+async def _handle_resume(query, context, session_id: str) -> None:
+    """Resume a stopped/paused session and switch the user's active session cache."""
+    api_client = context.bot_data["api_client"]
+    telegram_id = query.from_user.id
+
+    try:
+        await query.edit_message_text("Resuming session...")
+        session = await api_client.resume_session(UUID(session_id), telegram_id)
+
+        # Update the bot_data cache so message routing uses the resumed session.
+        context.bot_data[f"session:{telegram_id}"] = str(session.id)
+
+        await query.edit_message_text(
+            f"Session resumed: {session.container_name}\n"
+            "Send a message to continue."
+        )
+    except Exception as exc:
+        logger.exception("Failed to resume session %s: %s", session_id, exc)
+        await query.edit_message_text(f"Resume failed: {exc}")
+
+
+async def _handle_session_history(query, context, session_id: str) -> None:
+    """Show message history for a selected session."""
+    api_client = context.bot_data["api_client"]
+
+    try:
+        messages = await api_client.get_session_messages(UUID(session_id), limit=20)
+        text = format_message_history(messages)
+
+        max_length = 4000
+        if len(text) > max_length:
+            text = text[:max_length] + "\n\n... (truncated)"
+
+        await query.edit_message_text(text)
+    except Exception as exc:
+        logger.exception("Failed to load session history: %s", exc)
+        await query.edit_message_text(f"Failed to load history: {exc}")
+
+
+async def _handle_sessions_list(query, context) -> None:
+    """Re-render the session list (triggered by 'Back to List' button)."""
+    api_client = context.bot_data["api_client"]
+    telegram_id = query.from_user.id
+
+    try:
+        sessions = await api_client.list_user_sessions(telegram_id)
+        text = format_session_list_for_user(sessions)
+
+        if not sessions:
+            await query.edit_message_text(text)
+            return
+
+        button_data = [
+            (index, str(session.id), format_session_button_label(session, index))
+            for index, session in enumerate(sessions, start=1)
+        ]
+        await query.edit_message_text(
+            text, reply_markup=session_list_keyboard(button_data)
+        )
+    except Exception as exc:
+        logger.exception("Failed to list sessions: %s", exc)
+        await query.edit_message_text(f"Failed to list sessions: {exc}")
+
+
 async def _handle_generic_action(query, context, action: str) -> None:
     """Handle simple info/help actions from keyboards."""
+    if action == "sessions_list":
+        await _handle_sessions_list(query, context)
+        return
+
     responses = {
         "cancel": "Cancelled.",
         "new_session": "Use the /new command to create a container session.",
