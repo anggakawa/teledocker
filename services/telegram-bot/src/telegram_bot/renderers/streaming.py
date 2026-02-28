@@ -16,6 +16,8 @@ import time
 from telegram import Bot, Message
 from telegram.error import BadRequest, TimedOut
 
+from telegram_bot.markdown_to_telegram import markdown_to_telegram_html
+
 logger = logging.getLogger(__name__)
 
 # Telegram message character limit.
@@ -214,12 +216,15 @@ class TelegramStreamRenderer:
         if not display_text:
             return
 
-        # Check if we need to overflow to a new message.
-        if len(display_text) > _MAX_MESSAGE_LENGTH - _LENGTH_SAFETY_MARGIN:
+        # Convert Markdown to HTML for Telegram formatting.
+        html_text = markdown_to_telegram_html(display_text)
+
+        # Check overflow against HTML length (tags count toward 4096 limit).
+        if len(html_text) > _MAX_MESSAGE_LENGTH - _LENGTH_SAFETY_MARGIN:
             await self._handle_overflow()
             return
 
-        await self._edit_message(display_text)
+        await self._edit_message(html_text)
         self._pending_text = ""
 
     async def _handle_overflow(self) -> None:
@@ -228,7 +233,7 @@ class TelegramStreamRenderer:
         Finalize the current message with text up to the limit,
         then start a new message for the remainder.
         """
-        # Find a safe split point in the accumulated text.
+        # Find a safe split point in the raw accumulated text.
         safe_limit = _MAX_MESSAGE_LENGTH - _LENGTH_SAFETY_MARGIN
         split_text = self._text_buffer[:safe_limit]
 
@@ -241,26 +246,46 @@ class TelegramStreamRenderer:
 
         # Finalize current message with text up to split point.
         finalized_text = self._text_buffer[:split_point].strip()
-        await self._edit_message(finalized_text)
+        finalized_html = markdown_to_telegram_html(finalized_text)
+        await self._edit_message(finalized_html)
 
         # Start a new message with the remainder.
         remainder = self._text_buffer[split_point:].strip()
         self._text_buffer = remainder
         self._pending_text = ""
 
+        remainder_html = markdown_to_telegram_html(remainder) if remainder else "..."
         try:
             self._message = await self._bot.send_message(
                 chat_id=self._chat_id,
-                text=remainder if remainder else "...",
+                text=remainder_html,
+                parse_mode="HTML",
             )
             self._messages.append(self._message)
-            self._last_sent_text = remainder if remainder else "..."
+            self._last_sent_text = remainder_html
             self._last_edit_time = time.monotonic()
+        except BadRequest as exc:
+            if "can't parse entities" in str(exc).lower():
+                # HTML was malformed — fall back to plain text.
+                logger.warning("Overflow HTML parse failed, falling back to plain text")
+                self._message = await self._bot.send_message(
+                    chat_id=self._chat_id,
+                    text=remainder if remainder else "...",
+                )
+                self._messages.append(self._message)
+                self._last_sent_text = remainder if remainder else "..."
+                self._last_edit_time = time.monotonic()
+            else:
+                logger.exception("Failed to send overflow message")
         except Exception:
             logger.exception("Failed to send overflow message")
 
     async def _edit_message(self, text: str) -> None:
-        """Edit the current Telegram message, handling common errors."""
+        """Edit the current Telegram message, handling common errors.
+
+        Sends with parse_mode="HTML". If Telegram rejects the HTML as
+        malformed, falls back to plain text for that single edit.
+        """
         if self._message is None:
             return
 
@@ -273,12 +298,26 @@ class TelegramStreamRenderer:
                 chat_id=self._chat_id,
                 message_id=self._message.message_id,
                 text=text,
+                parse_mode="HTML",
             )
             self._last_sent_text = text
             self._last_edit_time = time.monotonic()
         except BadRequest as exc:
             error_msg = str(exc).lower()
-            if "message is not modified" in error_msg:
+            if "can't parse entities" in error_msg:
+                # HTML was malformed mid-stream — fall back to plain text.
+                logger.debug("HTML parse failed, falling back to plain text")
+                try:
+                    await self._bot.edit_message_text(
+                        chat_id=self._chat_id,
+                        message_id=self._message.message_id,
+                        text=text,
+                    )
+                    self._last_sent_text = text
+                    self._last_edit_time = time.monotonic()
+                except Exception:
+                    logger.warning("Plain text fallback also failed")
+            elif "message is not modified" in error_msg:
                 # Content identical — safe to ignore.
                 pass
             elif "message to edit not found" in error_msg:

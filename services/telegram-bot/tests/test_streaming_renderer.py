@@ -7,12 +7,15 @@ Tests verify the renderer correctly:
 - Handles message overflow beyond 4096 characters.
 - Skips edits when text hasn't changed.
 - Handles Telegram API errors gracefully.
+- Sends messages with parse_mode="HTML".
+- Falls back to plain text when HTML parsing fails.
 """
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telegram.error import BadRequest
 
 from telegram_bot.renderers.streaming import (
     TelegramStreamRenderer,
@@ -137,11 +140,11 @@ class TestStreamRendererToolEvents:
         await renderer.handle_event({"type": "tool_start", "tool_name": "Read"})
         await asyncio.sleep(0.4)
 
-        # The edit should include tool status.
+        # The edit should include tool status (HTML-converted: > becomes blockquote).
         last_call_args = mock_bot.edit_message_text.call_args
         if last_call_args:
             text = last_call_args.kwargs.get("text", "")
-            assert "> Reading..." in text
+            assert "Reading..." in text
 
     @pytest.mark.asyncio
     async def test_tool_end_shows_details(self, renderer, mock_bot):
@@ -173,10 +176,10 @@ class TestStreamRendererToolEvents:
         })
         await renderer.finalize()
 
-        # Final message should not have tool status.
+        # Final message should not have tool status (no blockquote tag).
         last_call_args = mock_bot.edit_message_text.call_args
         text = last_call_args.kwargs.get("text", "")
-        assert ">" not in text
+        assert "<blockquote>" not in text
 
 
 class TestStreamRendererErrorHandling:
@@ -276,3 +279,77 @@ class TestStreamRendererTelegramErrors:
         # Should not raise.
         await renderer.handle_event({"type": "text_delta", "text": "x" * 150})
         await asyncio.sleep(0.1)
+
+
+class TestStreamRendererHtmlMode:
+    """Tests for HTML parse_mode and fallback behavior."""
+
+    @pytest.mark.asyncio
+    async def test_edit_sends_parse_mode_html(self, renderer, mock_bot):
+        """edit_message_text should include parse_mode='HTML'."""
+        await renderer.start()
+
+        await renderer.handle_event({"type": "text_delta", "text": "Hello"})
+        await renderer.finalize()
+
+        # Find the call that edited (not the start placeholder).
+        for call in mock_bot.edit_message_text.call_args_list:
+            assert call.kwargs.get("parse_mode") == "HTML"
+
+    @pytest.mark.asyncio
+    async def test_html_fallback_on_parse_error(self, renderer, mock_bot):
+        """When HTML parsing fails, should retry without parse_mode."""
+        await renderer.start()
+
+        call_count = 0
+
+        async def fail_html_then_succeed(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if kwargs.get("parse_mode") == "HTML" and call_count <= 2:
+                raise BadRequest("Can't parse entities")
+            return None
+
+        mock_bot.edit_message_text.side_effect = fail_html_then_succeed
+
+        await renderer.handle_event({"type": "text_delta", "text": "Test text"})
+        await renderer.finalize()
+
+        # Should have attempted HTML first, then plain text fallback.
+        calls = mock_bot.edit_message_text.call_args_list
+        assert len(calls) >= 2
+
+        # First call should have parse_mode="HTML".
+        assert calls[-2].kwargs.get("parse_mode") == "HTML"
+        # Fallback call should NOT have parse_mode.
+        assert "parse_mode" not in calls[-1].kwargs
+
+    @pytest.mark.asyncio
+    async def test_markdown_converted_to_html_tags(self, renderer, mock_bot):
+        """Markdown in text should be converted to HTML tags."""
+        await renderer.start()
+
+        await renderer.handle_event({
+            "type": "text_delta",
+            "text": "This is **bold** text",
+        })
+        await renderer.finalize()
+
+        last_call_args = mock_bot.edit_message_text.call_args
+        text = last_call_args.kwargs.get("text", "")
+        assert "<b>bold</b>" in text
+
+    @pytest.mark.asyncio
+    async def test_overflow_sends_parse_mode_html(self, renderer, mock_bot):
+        """Overflow messages should also use parse_mode='HTML'."""
+        await renderer.start()
+
+        # Send text that will trigger overflow.
+        large_text = "A" * 4000
+        await renderer.handle_event({"type": "text_delta", "text": large_text})
+        await renderer.finalize()
+
+        # Check that send_message for overflow used parse_mode="HTML".
+        for call in mock_bot.send_message.call_args_list[1:]:
+            if call.kwargs.get("text", "") != "...":
+                assert call.kwargs.get("parse_mode") == "HTML"
