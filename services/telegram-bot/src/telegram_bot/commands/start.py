@@ -13,20 +13,20 @@ logger = logging.getLogger(__name__)
 _HELP_TEXT = """
 *ChatOps AI Bridge — Commands*
 
-*Session commands* _(approved users)_:
+*Session commands* _\\(approved users\\)_:
 `/new` — Create a new container session
 `/stop` — Stop active container \\(preserves workspace\\)
 `/restart` — Restart active container
 `/destroy` — Destroy container and workspace permanently
 `/status` — Show container status and resource usage
 
-*Interaction* _(approved users)_:
+*Interaction* _\\(approved users\\)_:
 Send any message → forwarded to Claude Code
 `/shell <cmd>` — Execute raw shell command
 `/download <path>` — Download file from container
 Upload a file → saved to container workspace
 
-*Configuration* _(approved users)_:
+*Configuration* _\\(approved users\\)_:
 `/setkey <api\\_key>` — Store API key \\(message auto\\-deleted\\)
 `/setprovider <preset>` — Set provider: `anthropic`, `openrouter`, `custom`
 `/setbaseurl <url>` — Set custom API base URL
