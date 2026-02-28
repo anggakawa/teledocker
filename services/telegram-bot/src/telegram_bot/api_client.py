@@ -181,6 +181,15 @@ class ApiClient:
             response = await client.delete(f"/api/v1/sessions/{session_id}")
             response.raise_for_status()
 
+    async def destroy_sessions_by_status(self, status: str) -> dict:
+        """Bulk destroy all sessions with the given status."""
+        async with self._client() as client:
+            response = await client.delete(
+                "/api/v1/sessions", params={"status": status}
+            )
+            response.raise_for_status()
+            return response.json()
+
     # -----------------------------------------------------------------------
     # Streaming operations
     # -----------------------------------------------------------------------

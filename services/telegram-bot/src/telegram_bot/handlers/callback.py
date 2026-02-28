@@ -46,6 +46,8 @@ async def callback_query_handler(update: Update, context: ContextTypes.DEFAULT_T
         await _handle_restart(query, context, payload)
     elif action == "admin_destroy":
         await _handle_admin_destroy_session(query, context, payload)
+    elif action == "admin_destroy_status":
+        await _handle_admin_destroy_by_status(query, context, payload)
     elif action == "action":
         await _handle_generic_action(query, context, payload)
     else:
@@ -193,3 +195,26 @@ async def _handle_admin_destroy_session(query, context, session_id: str) -> None
     except Exception as exc:
         logger.exception("Failed to destroy session %s: %s", session_id, exc)
         await query.edit_message_text(f"Destroy failed: {exc}")
+
+
+async def _handle_admin_destroy_by_status(query, context, status: str) -> None:
+    """Admin bulk-destroys all sessions with a given status."""
+    admin_ids = context.bot_data.get("admin_ids", [])
+    if query.from_user.id not in admin_ids:
+        await query.edit_message_text("Only admins can destroy sessions.")
+        return
+
+    api_client = context.bot_data["api_client"]
+
+    try:
+        result = await api_client.destroy_sessions_by_status(status)
+        destroyed = result.get("destroyed", 0)
+        failed = result.get("failed", 0)
+
+        message = f"Destroyed {destroyed} {status} session(s)."
+        if failed:
+            message += f"\n{failed} session(s) failed to destroy."
+        await query.edit_message_text(message)
+    except Exception as exc:
+        logger.exception("Failed to bulk destroy %s sessions: %s", status, exc)
+        await query.edit_message_text(f"Bulk destroy failed: {exc}")

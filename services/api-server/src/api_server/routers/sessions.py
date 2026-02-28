@@ -64,6 +64,11 @@ class UpdateStatusRequest(BaseModel):
     status: str
 
 
+class BulkDestroyResponse(BaseModel):
+    destroyed: int
+    failed: int
+
+
 def _build_env_vars(user: User, app_settings: ApiServerSettings) -> dict[str, str]:
     """Build Claude CLI env vars from the user's API key and provider config.
 
@@ -126,6 +131,25 @@ async def list_sessions(
 ) -> list[SessionDTO]:
     """List sessions, optionally filtered by status."""
     return await session_service.list_sessions(status_filter, db)
+
+
+@router.delete("", response_model=BulkDestroyResponse)
+async def bulk_destroy_sessions(
+    status_filter: str = Query(..., alias="status"),
+    db: AsyncSession = Depends(get_db),
+) -> BulkDestroyResponse:
+    """Destroy all sessions matching the given status.
+
+    The status query parameter is required to prevent accidental deletion
+    of all sessions.
+    """
+    result = await session_service.destroy_sessions_by_status(
+        status_filter=status_filter,
+        container_manager_url=settings.container_manager_url,
+        service_token=settings.service_token,
+        db=db,
+    )
+    return BulkDestroyResponse(**result)
 
 
 @router.get("/active", response_model=SessionDTO)

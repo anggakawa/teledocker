@@ -5,6 +5,7 @@ sitting in chat history.
 """
 
 import logging
+from collections import Counter
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -298,6 +299,7 @@ async def containers_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         (index, str(session.id))
         for index, (session, _) in enumerate(sessions_with_users, start=1)
     ]
-    keyboard = admin_sessions_keyboard(keyboard_entries)
+    status_counts = Counter(session.status for session, _ in sessions_with_users)
+    keyboard = admin_sessions_keyboard(keyboard_entries, status_counts)
 
     await update.message.reply_text(text, reply_markup=keyboard)

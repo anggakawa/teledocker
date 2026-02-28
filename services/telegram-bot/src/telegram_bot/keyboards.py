@@ -2,6 +2,10 @@
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
+# Statuses that admins can bulk-destroy. Running and creating are excluded
+# to prevent accidental destruction of active or in-progress sessions.
+BULK_DESTROYABLE_STATUSES = {"error", "paused", "stopped"}
+
 
 def new_user_admin_keyboard(telegram_id: int) -> InlineKeyboardMarkup:
     """Keyboard sent to admins when a new user registers."""
@@ -52,11 +56,14 @@ def confirm_stop_keyboard(session_id: str) -> InlineKeyboardMarkup:
 
 def admin_sessions_keyboard(
     sessions: list[tuple[int, str]],
+    status_counts: dict[str, int] | None = None,
 ) -> InlineKeyboardMarkup:
     """Keyboard for admin /containers command with a destroy button per session.
 
     Args:
         sessions: List of (display_index, session_id) pairs.
+        status_counts: Mapping of status -> count for bulk destroy buttons.
+            Only statuses in BULK_DESTROYABLE_STATUSES are shown.
     """
     rows = [
         [InlineKeyboardButton(
@@ -65,6 +72,16 @@ def admin_sessions_keyboard(
         )]
         for index, session_id in sessions
     ]
+
+    if status_counts:
+        for status_name in sorted(BULK_DESTROYABLE_STATUSES):
+            count = status_counts.get(status_name, 0)
+            if count > 0:
+                rows.append([InlineKeyboardButton(
+                    f"Destroy all {status_name} ({count})",
+                    callback_data=f"admin_destroy_status:{status_name}",
+                )])
+
     return InlineKeyboardMarkup(rows)
 
 
