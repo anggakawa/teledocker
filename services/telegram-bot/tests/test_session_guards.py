@@ -8,18 +8,16 @@ Verifies that:
    a loop.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-
-from chatops_shared.schemas.session import SessionDTO, SessionStatus
-from chatops_shared.schemas.user import UserDTO, UserRole
-
 from telegram_bot.commands.session import new_command
 from telegram_bot.handlers.message import default_message_handler
 
+from chatops_shared.schemas.session import SessionDTO, SessionStatus
+from chatops_shared.schemas.user import UserDTO, UserRole
 
 # ---------------------------------------------------------------------------
 # Shared test constants
@@ -37,7 +35,7 @@ SESSION_ID = uuid4()
 
 def _now() -> datetime:
     """Return the current UTC time."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _make_user_dto(

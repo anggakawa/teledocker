@@ -9,13 +9,12 @@ the filtering and branching logic without real HTTP or Docker.
 """
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import httpx
 import pytest
-
 from container_manager.cleanup import IdleContainerCleaner
 
 
@@ -26,7 +25,7 @@ def _make_session(
 ) -> dict:
     """Build a fake session dict matching the api-server JSON response."""
     session_id = str(uuid4())
-    last_activity = datetime.now(timezone.utc) - timedelta(minutes=idle_minutes)
+    last_activity = datetime.now(UTC) - timedelta(minutes=idle_minutes)
     return {
         "id": session_id,
         "status": status,

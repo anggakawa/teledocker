@@ -9,9 +9,7 @@ upstream callers can proceed with database cleanup.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from container_manager.docker_client import DockerClient, _is_not_found
-
 
 # ---------------------------------------------------------------------------
 # Helpers

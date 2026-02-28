@@ -26,8 +26,6 @@ The two bugs this test suite guards against:
 
 import json
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # Pure helper that mirrors the parsing logic from sessions.py generate()
 # ---------------------------------------------------------------------------

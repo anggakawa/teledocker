@@ -12,15 +12,13 @@ Tests verify the renderer correctly:
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telegram.error import BadRequest
-
 from telegram_bot.renderers.streaming import (
     TelegramStreamRenderer,
     _format_tool_status,
-    _MAX_MESSAGE_LENGTH,
 )
 
 

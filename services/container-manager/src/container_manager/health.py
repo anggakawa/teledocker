@@ -85,7 +85,7 @@ class ContainerHealthMonitor:
                     )
                     await ws.send(ping_message)
                     await asyncio.wait_for(ws.recv(), timeout=_WEBSOCKET_TIMEOUT_SECONDS)
-            except (WebSocketException, OSError, asyncio.TimeoutError) as exc:
+            except (TimeoutError, WebSocketException, OSError) as exc:
                 logger.warning(
                     "Agent bridge unreachable for session %s: %s", session_id, exc
                 )

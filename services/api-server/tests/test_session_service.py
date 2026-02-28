@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Mirror of destroy_session's core contract
 # ---------------------------------------------------------------------------
@@ -289,14 +288,13 @@ class TestDestroySessionNotFoundHandling:
             f"{_MODULE}._call_container_manager",
             new_callable=AsyncMock,
             side_effect=_make_http_status_error(500),
-        ):
-            with pytest.raises(httpx.HTTPStatusError):
-                await destroy_session(
-                    session_id=session.id,
-                    container_manager_url="http://container-manager:8001",
-                    service_token="test-token",
-                    db=db,
-                )
+        ), pytest.raises(httpx.HTTPStatusError):
+            await destroy_session(
+                session_id=session.id,
+                container_manager_url="http://container-manager:8001",
+                service_token="test-token",
+                db=db,
+            )
 
         # DB record must NOT be deleted when a real error occurs.
         db.delete.assert_not_called()
@@ -372,14 +370,13 @@ class TestDestroySessionNotFoundHandling:
             f"{_MODULE}._call_container_manager",
             new_callable=AsyncMock,
             side_effect=_make_http_status_error(404),
-        ):
-            with patch(f"{_MODULE}.logger") as mock_logger:
-                await destroy_session(
-                    session_id=session.id,
-                    container_manager_url="http://container-manager:8001",
-                    service_token="test-token",
-                    db=db,
-                )
+        ), patch(f"{_MODULE}.logger") as mock_logger:
+            await destroy_session(
+                session_id=session.id,
+                container_manager_url="http://container-manager:8001",
+                service_token="test-token",
+                db=db,
+            )
 
-                mock_logger.warning.assert_called_once()
-                assert "not found" in mock_logger.warning.call_args[0][0]
+            mock_logger.warning.assert_called_once()
+            assert "not found" in mock_logger.warning.call_args[0][0]

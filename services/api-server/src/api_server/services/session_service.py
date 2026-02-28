@@ -8,9 +8,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
-from chatops_shared.schemas.session import SessionDTO
-
 from api_server.db.models import Session, User
+from chatops_shared.schemas.session import SessionDTO
 
 logger = logging.getLogger(__name__)
 

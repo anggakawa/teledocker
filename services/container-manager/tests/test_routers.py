@@ -11,7 +11,6 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from container_manager.routers import _wait_for_agent_bridge
 
 
@@ -168,7 +167,7 @@ class TestWebSocketRetryInGenerate:
             mock_connect.return_value = mock_ws
 
             # Import after patching to get the real endpoint function.
-            from container_manager.routers import send_message_to_agent, SendMessageRequest
+            from container_manager.routers import SendMessageRequest, send_message_to_agent
 
             mock_docker = AsyncMock()
             mock_docker.get_container_name = AsyncMock(return_value="agent-user1")
@@ -207,7 +206,7 @@ class TestWebSocketRetryInGenerate:
             ]
 
             with patch("container_manager.routers.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
-                from container_manager.routers import send_message_to_agent, SendMessageRequest
+                from container_manager.routers import SendMessageRequest, send_message_to_agent
 
                 mock_docker = AsyncMock()
                 mock_docker.get_container_name = AsyncMock(return_value="agent-user1")
@@ -232,7 +231,7 @@ class TestWebSocketRetryInGenerate:
             mock_connect.side_effect = OSError("Connection refused")
 
             with patch("container_manager.routers.asyncio.sleep", new_callable=AsyncMock):
-                from container_manager.routers import send_message_to_agent, SendMessageRequest
+                from container_manager.routers import SendMessageRequest, send_message_to_agent
 
                 mock_docker = AsyncMock()
                 mock_docker.get_container_name = AsyncMock(return_value="agent-user1")

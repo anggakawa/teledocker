@@ -96,4 +96,4 @@ class TestAdminSessionsKeyboard:
 
     def test_bulk_destroyable_statuses_constant(self):
         """The constant should contain exactly error, paused, stopped."""
-        assert BULK_DESTROYABLE_STATUSES == {"error", "paused", "stopped"}
+        assert {"error", "paused", "stopped"} == BULK_DESTROYABLE_STATUSES

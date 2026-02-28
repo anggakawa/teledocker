@@ -1,13 +1,10 @@
 """FastAPI dependency providers for database sessions, Redis, and service auth."""
 
-from collections.abc import AsyncGenerator
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Header, HTTPException, status
 from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_server.config import settings
-from api_server.db.engine import get_db
 
 # Redis client is initialized once in the lifespan and stored here.
 _redis_client: Redis | None = None

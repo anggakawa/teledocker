@@ -24,7 +24,6 @@ import json
 import pytest
 from fastapi.responses import StreamingResponse
 
-
 # ---------------------------------------------------------------------------
 # Mirror of the constant and helper from api_server/routers/sessions.py
 # ---------------------------------------------------------------------------
@@ -324,7 +323,7 @@ class TestNoContainerErrorConstant:
         Extra whitespace would be visible in the Telegram chat as odd spacing
         and could confuse string-matching in client code.
         """
-        assert _NO_CONTAINER_ERROR == _NO_CONTAINER_ERROR.strip(), (
+        assert _NO_CONTAINER_ERROR.strip() == _NO_CONTAINER_ERROR, (
             f"Error message must not have leading or trailing whitespace. "
             f"Got: {_NO_CONTAINER_ERROR!r}"
         )

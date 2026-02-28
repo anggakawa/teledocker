@@ -5,11 +5,10 @@ structured event dicts, handling both new event format and legacy chunks.
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 from uuid import UUID
 
 import pytest
-
 from telegram_bot.api_client import ApiClient
 
 

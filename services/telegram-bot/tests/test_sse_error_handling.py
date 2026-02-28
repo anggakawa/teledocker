@@ -40,8 +40,6 @@ The two bugs this test suite guards against:
 
 import json
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # SSE sentinel constant — mirrors the value used in both generator methods.
 # ---------------------------------------------------------------------------

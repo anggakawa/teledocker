@@ -5,7 +5,7 @@ text, but NOT inside code blocks. We handle both cases carefully here.
 """
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from chatops_shared.schemas.session import SessionDTO
 from chatops_shared.schemas.user import UserDTO
@@ -36,7 +36,7 @@ def format_error(message: str) -> str:
 
 def format_age(dt: datetime) -> str:
     """Return a human-readable age string like '5m ago', '3h ago', '2d ago'."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     delta_seconds = (now - dt).total_seconds()
 
     if delta_seconds < 0:

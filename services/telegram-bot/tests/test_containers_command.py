@@ -7,26 +7,24 @@ These tests mock the ApiClient and Telegram bot APIs to verify:
   - Edge cases: no sessions, already-destroyed sessions
 """
 
-from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import httpx
 import pytest
-
-from chatops_shared.schemas.session import SessionDTO, SessionStatus
-from chatops_shared.schemas.user import UserDTO, UserRole
-
 from telegram_bot.commands.admin import containers_command
 from telegram_bot.handlers.callback import _handle_admin_destroy_session
 
+from chatops_shared.schemas.session import SessionDTO, SessionStatus
+from chatops_shared.schemas.user import UserDTO, UserRole
 
 ADMIN_ID = 111111
 NON_ADMIN_ID = 999999
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _make_session_dto(

@@ -5,7 +5,6 @@ bold, italic, strikethrough, links, headings, blockquotes, combined
 patterns, and streaming edge cases (partial/unclosed markdown).
 """
 
-import pytest
 
 from telegram_bot.markdown_to_telegram import markdown_to_telegram_html
 

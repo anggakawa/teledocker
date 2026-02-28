@@ -3,17 +3,17 @@
 These formatters produce plain-text output for the admin /containers command.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
+
+from telegram_bot.formatters import format_age, format_session_list_for_admin
 
 from chatops_shared.schemas.session import SessionDTO, SessionStatus
 from chatops_shared.schemas.user import UserDTO, UserRole
 
-from telegram_bot.formatters import format_age, format_session_list_for_admin
-
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _make_session(

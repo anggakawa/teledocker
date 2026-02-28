@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Mirror of the query contract from user_service.py
 # ---------------------------------------------------------------------------

@@ -5,9 +5,8 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chatops_shared.schemas.message import MessageDTO
-
 from api_server.db.models import Message
+from chatops_shared.schemas.message import MessageDTO
 
 
 async def log_message(

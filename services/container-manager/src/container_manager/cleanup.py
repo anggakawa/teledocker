@@ -12,7 +12,7 @@ resources (disk, cgroups entries, volume storage).
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 
@@ -82,7 +82,7 @@ class IdleContainerCleaner:
             logger.warning("Idle cleaner failed to fetch sessions: %s", exc)
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         idle_threshold_seconds = self._idle_timeout_minutes * 60
 
         for session in sessions:
@@ -135,7 +135,7 @@ class IdleContainerCleaner:
             logger.warning("Destroy cleaner failed to fetch sessions: %s", exc)
             return
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         destroy_threshold_seconds = self._destroy_timeout_hours * 3600
 
         for session in sessions:
