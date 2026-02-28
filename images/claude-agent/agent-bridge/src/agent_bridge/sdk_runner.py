@@ -5,19 +5,33 @@ Python Agent SDK, which provides:
 - Persistent multi-turn sessions (no process restart per message)
 - Structured streaming events (text deltas, tool use, results)
 - Session ID tracking for conversation continuity
-- Interrupt support for cancelling long-running operations
+- File-based session persistence across container restarts
+- Concurrency lock for safe shared-runner access
 """
 
+import asyncio
 import json
 import logging
 import time
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from typing import Any
 
-from claude_agent_sdk import ClaudeAgentOptions, query
+from claude_agent_sdk import ClaudeAgentOptions, ProcessError, query
 from claude_agent_sdk.types import StreamEvent
 
+from agent_bridge.mcp_builder import build_mcp_servers
+
 logger = logging.getLogger(__name__)
+
+# Session ID is persisted to disk so it survives container destroy/recreate cycles.
+# Stored on the persistent /workspace volume (the only storage that outlives containers).
+_SESSION_FILE = Path("/workspace/.agent_session")
+
+# Claude CLI state directory on the persistent volume. ~/.claude is a symlink
+# pointing here. Must exist before the CLI runs — a dangling symlink blocks
+# mkdir -p from creating subdirectories at runtime.
+_CLAUDE_STATE_DIR = Path("/workspace/.claude")
 
 
 def _summarize_tool_input(tool_name: str, tool_input: dict[str, Any]) -> str:
@@ -48,11 +62,71 @@ def _summarize_tool_input(tool_name: str, tool_input: dict[str, Any]) -> str:
 
 
 class ClaudeSDKRunner:
-    """Manages Claude Agent SDK sessions with structured event streaming."""
+    """Manages Claude Agent SDK sessions with structured event streaming.
+
+    Designed to be used as a singleton per container. Each container serves
+    one user, so there is no multi-tenancy concern. The asyncio lock serializes
+    concurrent messages to prevent session file corruption.
+    """
 
     def __init__(self) -> None:
+        self._ensure_claude_state_dir()
         # Session ID from the SDK, used to resume multi-turn conversations.
-        self._session_id: str | None = None
+        self._session_id: str | None = self._load_session_id()
+        # Serialize access — SDK can't handle concurrent query() on the same session.
+        self._lock = asyncio.Lock()
+
+    @staticmethod
+    def _ensure_claude_state_dir() -> None:
+        """Create the Claude CLI state directory if it doesn't exist.
+
+        ~/.claude is a symlink to /workspace/.claude. If the target directory
+        is missing (e.g. existing volume from an older image), the CLI silently
+        fails to persist session data because mkdir -p can't resolve through a
+        dangling symlink.
+        """
+        try:
+            _CLAUDE_STATE_DIR.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.warning("Failed to create Claude state dir %s: %s", _CLAUDE_STATE_DIR, exc)
+
+    @staticmethod
+    def _load_session_id() -> str | None:
+        """Load session ID from disk if a previous session file exists."""
+        try:
+            if _SESSION_FILE.exists():
+                session_id = _SESSION_FILE.read_text().strip()
+                if session_id:
+                    logger.info("Loaded session ID from %s", _SESSION_FILE)
+                    return session_id
+        except (OSError, ValueError) as exc:
+            logger.warning("Failed to load session file %s: %s", _SESSION_FILE, exc)
+        return None
+
+    def _save_session_id(self) -> None:
+        """Persist current session ID to disk for container restart survival."""
+        if not self._session_id:
+            return
+        try:
+            _SESSION_FILE.write_text(self._session_id)
+        except OSError as exc:
+            logger.warning("Failed to save session file %s: %s", _SESSION_FILE, exc)
+
+    def clear_session(self) -> None:
+        """Reset conversation state — starts a fresh session on next message."""
+        self._session_id = None
+        try:
+            _SESSION_FILE.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("Failed to delete session file: %s", exc)
+
+    def get_session_info(self) -> dict:
+        """Return current session state for introspection."""
+        return {
+            "session_id": self._session_id,
+            "has_session": self._session_id is not None,
+            "session_file": str(_SESSION_FILE),
+        }
 
     async def send_message(
         self, prompt: str, env_vars: dict[str, str]
@@ -74,22 +148,42 @@ class ClaudeSDKRunner:
             env_vars: Environment variables to inject (API keys, provider config).
                       Passed directly to the SDK via the env option.
         """
-        start_time = time.monotonic()
+        async with self._lock:
+            start_time = time.monotonic()
 
-        try:
-            async for event_dict in self._run_query(prompt, env_vars):
-                yield event_dict
-        except Exception as exc:
-            logger.exception("SDK query failed: %s", exc)
-            yield {"type": "error", "text": str(exc)}
+            try:
+                async for event_dict in self._run_query(prompt, env_vars):
+                    yield event_dict
+            except ProcessError as exc:
+                # Resume may fail if the session expired or was corrupted.
+                # Retry once without resume before giving up.
+                if self._session_id:
+                    logger.warning(
+                        "Resume failed (session %s): %s — retrying without resume",
+                        self._session_id,
+                        exc,
+                    )
+                    self.clear_session()
+                    try:
+                        async for event_dict in self._run_query(prompt, env_vars):
+                            yield event_dict
+                    except Exception as retry_exc:
+                        logger.exception("Retry without resume also failed: %s", retry_exc)
+                        yield {"type": "error", "text": str(retry_exc)}
+                else:
+                    logger.exception("SDK query failed: %s", exc)
+                    yield {"type": "error", "text": str(exc)}
+            except Exception as exc:
+                logger.exception("SDK query failed: %s", exc)
+                yield {"type": "error", "text": str(exc)}
 
-        # Emit final result event with timing.
-        elapsed_ms = int((time.monotonic() - start_time) * 1000)
-        yield {
-            "type": "result",
-            "session_id": self._session_id or "",
-            "duration_ms": elapsed_ms,
-        }
+            # Emit final result event with timing.
+            elapsed_ms = int((time.monotonic() - start_time) * 1000)
+            yield {
+                "type": "result",
+                "session_id": self._session_id or "",
+                "duration_ms": elapsed_ms,
+            }
 
     async def _run_query(
         self, prompt: str, env_vars: dict[str, str]
@@ -99,12 +193,16 @@ class ClaudeSDKRunner:
         # ANTHROPIC_MODEL is our internal transport — the SDK uses the model option directly.
         model = env_vars.pop("ANTHROPIC_MODEL", None)
 
+        # Build MCP server configs from registry, gated by available env vars.
+        mcp_servers = build_mcp_servers(env_vars)
+
         options = ClaudeAgentOptions(
             include_partial_messages=True,
             permission_mode="bypassPermissions",
             max_turns=100,
             env=env_vars,
             model=model,
+            mcp_servers=mcp_servers if mcp_servers else None,
         )
 
         # Resume conversation if we have a session from a previous turn.
@@ -116,14 +214,19 @@ class ClaudeSDKRunner:
         current_tool_input_json = ""
 
         async for message in query(prompt=prompt, options=options):
-            # Capture session ID from the init message.
+            # Skip system/init messages (no session_id on these in SDK v0.1.44+).
             if hasattr(message, "subtype") and message.subtype == "init":
-                if hasattr(message, "session_id"):
-                    self._session_id = message.session_id
                 continue
 
             # Handle raw streaming events (text deltas, tool call lifecycle).
             if isinstance(message, StreamEvent):
+                # Capture session ID from the first StreamEvent — the SDK
+                # embeds it on every event rather than a separate init message.
+                if not self._session_id and message.session_id:
+                    self._session_id = message.session_id
+                    self._save_session_id()
+                    logger.info("Captured session ID: %s", self._session_id)
+
                 event = message.event
                 event_type = event.get("type", "")
 
@@ -198,15 +301,17 @@ class ClaudeSDKRunner:
                             }
 
             # Handle final result message with metadata.
-            if hasattr(message, "subtype") and message.subtype == "result":
+            # SDK v0.1.44 uses subtype="success" (not "result").
+            if hasattr(message, "subtype") and message.subtype in ("result", "success"):
                 cost_usd = None
-                if hasattr(message, "cost_usd"):
-                    cost_usd = message.cost_usd
+                if hasattr(message, "total_cost_usd"):
+                    cost_usd = message.total_cost_usd
                 duration_ms = None
                 if hasattr(message, "duration_ms"):
                     duration_ms = message.duration_ms
                 if hasattr(message, "session_id"):
                     self._session_id = message.session_id
+                    self._save_session_id()
 
                 yield {
                     "type": "result",

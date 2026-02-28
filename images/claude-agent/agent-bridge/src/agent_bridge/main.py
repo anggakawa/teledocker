@@ -9,8 +9,9 @@ Protocol (new structured events):
 Legacy protocol (run_shell, backward compat):
   Server -> Client: {"id": "abc", "chunk": "...", "done": false}  (streaming)
 
-Non-streaming methods (upload_file, download_file, health_check) return a single
-response frame with "done": true and a "result" key.
+Non-streaming methods (upload_file, download_file, health_check, clear_session,
+get_conversation, new_conversation) return a single response frame with
+"done": true and a "result" key.
 """
 
 import asyncio
@@ -37,15 +38,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Module-level singletons — one per container, shared across WebSocket connections.
+# Lazy-initialized on first use so the event loop is already running.
+_sdk_runner: ClaudeSDKRunner | None = None
+_legacy_runner: ClaudeCodeRunner | None = None
+
+
+def get_sdk_runner() -> ClaudeSDKRunner:
+    """Return the singleton SDK runner, creating it on first call."""
+    global _sdk_runner
+    if _sdk_runner is None:
+        _sdk_runner = ClaudeSDKRunner()
+    return _sdk_runner
+
+
+def get_legacy_runner() -> ClaudeCodeRunner:
+    """Return the singleton legacy CLI runner, creating it on first call."""
+    global _legacy_runner
+    if _legacy_runner is None:
+        _legacy_runner = ClaudeCodeRunner()
+    return _legacy_runner
+
 
 async def handle_connection(websocket: WebSocketServerProtocol) -> None:
     """Process all JSON-RPC messages from a single WebSocket connection.
 
-    Each connection gets its own SDK runner (persistent multi-turn session)
-    and a legacy CLI runner (for raw shell commands).
+    Runners are shared singletons — each container serves one user, so the
+    SDK runner persists conversation state across reconnections.
     """
-    sdk_runner = ClaudeSDKRunner()
-    legacy_runner = ClaudeCodeRunner()
+    sdk_runner = get_sdk_runner()
+    legacy_runner = get_legacy_runner()
     logger.info("New connection from %s", websocket.remote_address)
 
     async for raw_message in websocket:
@@ -94,6 +116,21 @@ async def dispatch_request(
 
         elif method == "health_check":
             result = await health_check()
+            await websocket.send(json.dumps({"id": request_id, "result": result, "done": True}))
+
+        elif method == "clear_session":
+            sdk_runner.clear_session()
+            result = {"success": True, "message": "Session cleared"}
+            await websocket.send(json.dumps({"id": request_id, "result": result, "done": True}))
+
+        elif method == "get_conversation":
+            result = sdk_runner.get_session_info()
+            await websocket.send(json.dumps({"id": request_id, "result": result, "done": True}))
+
+        elif method == "new_conversation":
+            # Alias for clear_session with a more descriptive response.
+            sdk_runner.clear_session()
+            result = {"success": True, "message": "New conversation started"}
             await websocket.send(json.dumps({"id": request_id, "result": result, "done": True}))
 
         else:
