@@ -78,6 +78,7 @@ class DockerClient:
         container_config = {
             "Image": agent_image,
             "Hostname": container_name,
+            "WorkingDir": "/workspace",
             "Env": env_list,
             "User": "1000:1000",
             # Expose the agent bridge port only to the agent-net Docker network.

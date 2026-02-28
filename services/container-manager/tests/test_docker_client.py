@@ -166,3 +166,40 @@ class TestRemoveContainerNotFoundHandling:
 
             mock_logger.warning.assert_called_once()
             assert "already removed" in mock_logger.warning.call_args[0][0]
+
+
+# ---------------------------------------------------------------------------
+# Tests: create_container WorkingDir
+# ---------------------------------------------------------------------------
+
+
+class TestCreateContainer:
+    """Verify create_container() sets WorkingDir to /workspace."""
+
+    @pytest.mark.asyncio
+    async def test_working_dir_set_to_workspace(self):
+        """Container config must include WorkingDir: /workspace."""
+        client, mock_docker = _make_connected_client()
+
+        mock_container = MagicMock()
+        mock_container.start = AsyncMock()
+        mock_container.show = AsyncMock(return_value={"Id": "ctr-new-123"})
+        mock_docker.containers.create = AsyncMock(return_value=mock_container)
+
+        # Network inspection mock (for agent_network attachment).
+        mock_network = MagicMock()
+        mock_network.connect = AsyncMock()
+        mock_docker.networks.get = AsyncMock(return_value=mock_network)
+
+        await client.create_container(
+            container_name="test-ctr",
+            user_id="user-42",
+            env_vars={"KEY": "value"},
+            agent_image="claude-agent:latest",
+            workspace_base_path="/data/workspaces",
+            agent_network="agent-net",
+        )
+
+        call_kwargs = mock_docker.containers.create.call_args
+        config = call_kwargs.kwargs.get("config") or call_kwargs[1].get("config")
+        assert config["WorkingDir"] == "/workspace"
